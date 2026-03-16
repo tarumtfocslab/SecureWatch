@@ -1,20 +1,11 @@
 // src/pages/LiveViewPage.tsx
-// Full file (no skipped code) — RTSP normal/fisheye fixed:
-// ✅ RTSP normal ALWAYS uses /0
-// ✅ RTSP fisheye ALWAYS uses /A and /B (2×2 + 2×2 = 8 views total)
-// ✅ STOP probing /api/live/frame/... (that caused 404 + wrong fisheye detection)
-// ✅ Normal stream shows NO ROI overlay
-// ✅ Fisheye stream shows overlay only when detectionEnabled (optional)
-// ✅ Keeps video-ended + restart logic
-// ✅ No "const ..." inside JSX, no ratio undefined
-// ✅ RTSP fisheye only: frontend shows Group A / Group B bigger
-// ✅ Upload fisheye untouched
-// ✅ Avoids endless MJPEG reconnect loop
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-import { LOSTFOUND_API_BASE } from "../api/base";
-const API_BASE = LOSTFOUND_API_BASE;
+const API_BASE =
+  (import.meta as any).env?.VITE_API_BASE_URL?.replace(/\/$/, "") ||
+  "http://127.0.0.1:8000";
+
+const MAX_ACTIVE_LIVE_STREAMS = 5;
 
 type LiveDet = Record<string, any>;
 
@@ -68,6 +59,14 @@ type CameraStatus = {
   last_ended?: number;
   cooldown_remaining?: number;
   progress_percent?: number;
+};
+
+type CamRow = {
+  camId: string;
+  meta: SettingsCamera;
+  cam: LiveCam | null;
+  fish: boolean;
+  isActiveStream: boolean;
 };
 
 function normalizeCamId(id: string) {
@@ -148,6 +147,7 @@ function StatusStrip({
   camId,
   cameraStatus,
   isRestarting,
+  isActiveStream,
 }: {
   lostCount: number;
   hasLive: boolean;
@@ -157,6 +157,7 @@ function StatusStrip({
   camId: string;
   cameraStatus?: CameraStatus;
   isRestarting?: boolean;
+  isActiveStream?: boolean;
 }) {
   const [toggling, setToggling] = useState(false);
 
@@ -176,7 +177,7 @@ function StatusStrip({
 
   return (
     <div className="flex items-center justify-between text-[11px] text-slate-400 px-3 py-2 border-t border-slate-700/40 bg-slate-950/30">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="inline-flex items-center gap-1">
           <span
             className={`w-1.5 h-1.5 rounded-full ${
@@ -185,6 +186,18 @@ function StatusStrip({
           />
           {!hasLive ? "No Pipeline" : videoEnded ? "Video Ended" : "Live"}
         </span>
+
+        {typeof isActiveStream === "boolean" && hasLive && !videoEnded && (
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] border ${
+              isActiveStream
+                ? "bg-blue-500/20 text-blue-300 border-blue-500/30"
+                : "bg-slate-700/20 text-slate-300 border-slate-600/30"
+            }`}
+          >
+            {isActiveStream ? "Active Stream" : "Paused"}
+          </span>
+        )}
 
         {videoEnded && progressPercent > 0 && (
           <span className="text-yellow-400/70">{progressPercent.toFixed(0)}%</span>
@@ -247,6 +260,23 @@ function PlaceholderFrame({ label }: { label: string }) {
     <div className="relative w-full aspect-video bg-black flex items-center justify-center">
       <div className="text-xs text-slate-400 border border-slate-700/60 bg-slate-950/40 px-3 py-2 rounded-lg">
         {label}
+      </div>
+    </div>
+  );
+}
+
+function PausedPreview({
+  label,
+  reason,
+}: {
+  label: string;
+  reason?: string;
+}) {
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-black">
+      <div className="text-center">
+        <div className="text-slate-200 text-sm">{label}</div>
+        {reason ? <div className="text-slate-500 text-xs mt-2">{reason}</div> : null}
       </div>
     </div>
   );
@@ -405,6 +435,288 @@ function MjpegStream({
   );
 }
 
+function CameraCard({
+  row,
+  fisheyeOverride,
+  updatingDetection,
+  detectionConfig,
+  cameraStatus,
+  restartingCameras,
+  aspectMap,
+  setAspect,
+  toggleOverride,
+  toggleActiveCamera,
+  getStreamUrls,
+  handleToggleDetection,
+  handleRestartCamera,
+}: {
+  row: CamRow;
+  fisheyeOverride: Record<string, boolean | null>;
+  updatingDetection: Record<string, boolean>;
+  detectionConfig: DetectionConfig;
+  cameraStatus: Record<string, CameraStatus>;
+  restartingCameras: Record<string, boolean>;
+  aspectMap: Record<string, number>;
+  setAspect: (key: string, ratio: number) => void;
+  toggleOverride: (camId: string) => void;
+  toggleActiveCamera: (camId: string) => void;
+  getStreamUrls: (camId: string, meta?: SettingsCamera) => {
+    normal: string;
+    groupA: string;
+    groupB: string;
+  };
+  handleToggleDetection: (camId: string, enabled: boolean) => Promise<void>;
+  handleRestartCamera: (camId: string) => Promise<void>;
+}) {
+  const { camId, cam, meta, fish, isActiveStream } = row;
+  const hasLive = !!cam;
+  const lostCount = cam?.lost_items?.length ?? 0;
+
+  const camStatus = cameraStatus[camId] || ({} as CameraStatus);
+  const videoEnded = !!camStatus.video_ended;
+  const detectionEnabled = detectionConfig[camId] !== false && !videoEnded;
+  const isUpdating = !!updatingDetection[camId];
+  const allDets: LiveDet[] = detectionEnabled
+    ? (((cam?.views || []).flatMap((v) => (v?.detections || v?.dets || []) as LiveDet[])) as LiveDet[])
+    : [];
+
+  const streamUrls_ = getStreamUrls(camId, meta);
+
+  const overrideState = fisheyeOverride[camId];
+  const vt = String(meta?.videoType || "").toLowerCase();
+
+  const badgeText =
+    overrideState == null
+      ? fish
+        ? vt
+          ? `FISHEYE (${vt})`
+          : "FISHEYE"
+        : vt
+        ? `NORMAL (${vt})`
+        : "NORMAL"
+      : fish
+      ? "FISHEYE (forced)"
+      : "NORMAL (forced)";
+
+  const key0 = `${camId}:v0`;
+  const ratio0 = aspectMap[key0] || 1.3333333;
+
+  const keyA = `${camId}:A`;
+  const keyB = `${camId}:B`;
+  const ratioA = aspectMap[keyA] || 1.3333333;
+  const ratioB = aspectMap[keyB] || 1.3333333;
+
+  return (
+    <div className="rounded-2xl border border-slate-700/50 bg-slate-900/40 overflow-hidden w-full h-full">
+      <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+        <div className="text-white font-medium flex items-center gap-2 flex-wrap">
+          {meta?.name || camId}
+
+          <button
+            onClick={() => toggleOverride(camId)}
+            className={`text-[10px] px-2 py-0.5 rounded-full border transition ${
+              fish
+                ? "border-emerald-500/40 text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20"
+                : "border-slate-600/40 text-slate-300 bg-slate-800/20 hover:bg-slate-800/35"
+            }`}
+            title="Click to toggle: auto → fisheye → normal → auto"
+          >
+            {badgeText}
+          </button>
+
+          {hasLive && (
+            <button
+              onClick={() => toggleActiveCamera(camId)}
+              className={`text-[10px] px-2 py-0.5 rounded-full border transition ${
+                isActiveStream
+                  ? "border-blue-500/40 text-blue-200 bg-blue-500/10 hover:bg-blue-500/20"
+                  : "border-slate-600/40 text-slate-300 bg-slate-800/20 hover:bg-slate-800/35"
+              }`}
+            >
+              {isActiveStream ? "Pause" : "Activate"}
+            </button>
+          )}
+
+          {isUpdating && <span className="text-[10px] text-slate-400">updating...</span>}
+
+          {videoEnded && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+              ENDED
+            </span>
+          )}
+        </div>
+
+        <div className="text-xs text-slate-400">
+          REC •{" "}
+          {new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          })}
+        </div>
+      </div>
+
+      <div className="p-3 space-y-3">
+        {!hasLive ? (
+          <div className="rounded-xl border border-slate-700/40 overflow-hidden">
+            <PlaceholderFrame label="No live pipeline data (pipelines_live not running for this cam_id)" />
+            <StatusStrip
+              lostCount={0}
+              hasLive={false}
+              detectionEnabled={false}
+              onToggleDetection={handleToggleDetection}
+              camId={camId}
+              isActiveStream={false}
+            />
+          </div>
+        ) : !fish ? (
+          <div className="rounded-xl border border-slate-700/40 overflow-hidden">
+            <div className="w-full relative bg-black rounded-lg" style={{ aspectRatio: String(ratio0) }}>
+              {isActiveStream ? (
+                <>
+                  <MjpegStream
+                    url={streamUrls_.normal}
+                    camId={camId}
+                    viewId={0}
+                    detectionEnabled={detectionEnabled}
+                    showOverlays={false}
+                    onAspect={(r) => setAspect(key0, r)}
+                    videoEnded={videoEnded}
+                    onRestart={() => handleRestartCamera(camId)}
+                  />
+
+                  {detectionEnabled && (
+                    <div className="absolute inset-0 pointer-events-none">
+                      {allDets
+                        .filter((d) => Number(d?.view_id ?? 0) === 0)
+                        .map((d, i) => {
+                          const box = toPctBox(d);
+                          if (!box) return null;
+
+                          return (
+                            <div
+                              key={`n-${camId}-${i}`}
+                              className={`absolute border-2 rounded-md ${detColor(d)}`}
+                              style={{
+                                left: `${clamp(box.x, 0, 100)}%`,
+                                top: `${clamp(box.y, 0, 100)}%`,
+                                width: `${clamp(box.w, 0, 100)}%`,
+                                height: `${clamp(box.h, 0, 100)}%`,
+                              }}
+                            >
+                              <div className="absolute -top-6 left-0 px-2 py-1 text-xs rounded-md bg-black/70 text-white border border-white/10 whitespace-nowrap">
+                                {detLabel(d)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <PausedPreview
+                  label="Live stream paused"
+                  reason="Click Activate to move this card to the upper active section"
+                />
+              )}
+            </div>
+
+            <StatusStrip
+              lostCount={detectionEnabled ? lostCount : 0}
+              hasLive={true}
+              detectionEnabled={detectionEnabled}
+              onToggleDetection={handleToggleDetection}
+              onRestartCamera={handleRestartCamera}
+              camId={camId}
+              cameraStatus={camStatus}
+              isRestarting={restartingCameras[camId]}
+              isActiveStream={isActiveStream}
+            />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-slate-700/40 overflow-hidden">
+              <div className="px-3 py-2 text-xs text-slate-300 bg-slate-950/40 border-b border-slate-700/40">
+                Group A (2×2 grid) {!detectionEnabled && "- Display Only"}
+              </div>
+
+              <div className="w-full relative bg-black rounded-lg" style={{ aspectRatio: String(ratioA) }}>
+                {isActiveStream ? (
+                  <MjpegStream
+                    url={streamUrls_.groupA}
+                    camId={camId}
+                    viewId={"A"}
+                    detectionEnabled={detectionEnabled}
+                    showOverlays={detectionEnabled}
+                    onAspect={(r) => setAspect(keyA, r)}
+                    videoEnded={videoEnded}
+                    onRestart={() => handleRestartCamera(camId)}
+                  />
+                ) : (
+                  <PausedPreview
+                    label="Group A paused"
+                    reason="Click Activate to move this card to the upper active section"
+                  />
+                )}
+              </div>
+
+              <StatusStrip
+                lostCount={detectionEnabled ? lostCount : 0}
+                hasLive={true}
+                detectionEnabled={detectionEnabled}
+                onToggleDetection={handleToggleDetection}
+                onRestartCamera={handleRestartCamera}
+                camId={camId}
+                cameraStatus={camStatus}
+                isRestarting={restartingCameras[camId]}
+                isActiveStream={isActiveStream}
+              />
+            </div>
+
+            <div className="rounded-xl border border-slate-700/40 overflow-hidden">
+              <div className="px-3 py-2 text-xs text-slate-300 bg-slate-950/40 border-b border-slate-700/40">
+                Group B (2×2 grid) {!detectionEnabled && "- Display Only"}
+              </div>
+
+              <div className="w-full relative bg-black rounded-lg" style={{ aspectRatio: String(ratioB) }}>
+                {isActiveStream ? (
+                  <MjpegStream
+                    url={streamUrls_.groupB}
+                    camId={camId}
+                    viewId={"B"}
+                    detectionEnabled={detectionEnabled}
+                    showOverlays={detectionEnabled}
+                    onAspect={(r) => setAspect(keyB, r)}
+                    videoEnded={videoEnded}
+                    onRestart={() => handleRestartCamera(camId)}
+                  />
+                ) : (
+                  <PausedPreview
+                    label="Group B paused"
+                    reason="Click Activate to move this card to the upper active section"
+                  />
+                )}
+              </div>
+
+              <StatusStrip
+                lostCount={detectionEnabled ? lostCount : 0}
+                hasLive={true}
+                detectionEnabled={detectionEnabled}
+                onToggleDetection={handleToggleDetection}
+                onRestartCamera={handleRestartCamera}
+                camId={camId}
+                cameraStatus={camStatus}
+                isRestarting={restartingCameras[camId]}
+                isActiveStream={isActiveStream}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   const [aspectMap, setAspectMap] = useState<Record<string, number>>({});
   const setAspect = (key: string, ratio: number) => {
@@ -432,6 +744,8 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
     }
   });
 
+  const [activeCamIds, setActiveCamIds] = useState<string[]>([]);
+
   const checkCameraStatus = async () => {
     try {
       const r = await fetch(`${API_BASE}/api/live/status`, { cache: "no-store" });
@@ -457,7 +771,6 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
       );
 
       if (r.ok) {
-        console.log(`Camera ${camId} restarted successfully`);
         window.setTimeout(() => {
           setRestartingCameras((prev) => ({ ...prev, [camId]: false }));
         }, 2000);
@@ -575,7 +888,22 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
     return () => window.clearInterval(id);
   }, []);
 
-  const cams = useMemo(() => {
+  const isFisheye = (camId: string, meta?: SettingsCamera) => {
+    const ov = fisheyeOverride[camId];
+    if (ov === true) return true;
+    if (ov === false) return false;
+
+    if (meta?.isFisheye === true) return true;
+    if (meta?.isFisheye === false) return false;
+
+    const vt = String(meta?.videoType || "").toLowerCase();
+    if (vt === "fisheye") return true;
+    if (vt === "normal") return false;
+
+    return false;
+  };
+
+  const camsBase = useMemo(() => {
     const liveMap = state?.cameras || {};
 
     if (!camList.length) {
@@ -595,19 +923,33 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
     });
   }, [camList, state]);
 
-  const isFisheye = (camId: string, meta?: SettingsCamera) => {
-    const ov = fisheyeOverride[camId];
-    if (ov === true) return true;
-    if (ov === false) return false;
+  useEffect(() => {
+    setActiveCamIds((prev) => {
+      const validLiveIds = camsBase.filter(({ cam }) => !!cam).map(({ camId }) => camId);
+      const filteredPrev = prev.filter((id) => validLiveIds.includes(id));
 
-    if (meta?.isFisheye === true) return true;
-    if (meta?.isFisheye === false) return false;
+      if (filteredPrev.length > 0) return filteredPrev;
+      return validLiveIds.slice(0, MAX_ACTIVE_LIVE_STREAMS);
+    });
+  }, [camsBase]);
 
-    const vt = String(meta?.videoType || "").toLowerCase();
-    if (vt === "fisheye") return true;
-    if (vt === "normal") return false;
+  const activeLiveSet = useMemo(() => new Set(activeCamIds), [activeCamIds]);
 
-    return false;
+  const toggleActiveCamera = (camId: string) => {
+    setActiveCamIds((prev) => {
+      const exists = prev.includes(camId);
+
+      if (exists) {
+        return prev.filter((id) => id !== camId);
+      }
+
+      if (prev.length >= MAX_ACTIVE_LIVE_STREAMS) {
+        alert(`Max ${MAX_ACTIVE_LIVE_STREAMS} active live streams at one time.`);
+        return prev;
+      }
+
+      return [...prev, camId];
+    });
   };
 
   const toggleOverride = (camId: string) => {
@@ -645,250 +987,144 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
     };
   };
 
+  const rows = useMemo<CamRow[]>(() => {
+    return camsBase.map(({ camId, meta, cam }) => ({
+      camId,
+      meta,
+      cam,
+      fish: isFisheye(camId, meta),
+      isActiveStream: activeLiveSet.has(camId),
+    }));
+  }, [camsBase, activeLiveSet, fisheyeOverride]);
+
+  const activeFish = useMemo(
+    () => rows.filter((r) => r.isActiveStream && r.fish),
+    [rows]
+  );
+  const activeNormal = useMemo(
+    () => rows.filter((r) => r.isActiveStream && !r.fish),
+    [rows]
+  );
+  const pausedFish = useMemo(
+    () => rows.filter((r) => !r.isActiveStream && r.fish),
+    [rows]
+  );
+  const pausedNormal = useMemo(
+    () => rows.filter((r) => !r.isActiveStream && !r.fish),
+    [rows]
+  );
+
+  const activeRows = [...activeFish, ...activeNormal];
+  const pausedRows = [...pausedFish, ...pausedNormal];
+
+  const liveCount = useMemo(() => rows.filter((x) => !!x.cam).length, [rows]);
+
   return (
-  <div className="h-full w-full px-6 py-4">
-    <div className="flex items-center justify-between mb-4">
-      <div>
-        <h1 className="text-xl font-semibold text-white">
-          {mode === "lost-found" ? "Lost & Found Live View" : "Attire Compliance Live View"}
-        </h1>
-        <p className="text-slate-400 text-sm">
-          Live source: <span className="text-slate-300">{API_BASE}</span>
-        </p>
+    <div className="h-full w-full px-6 py-4">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="text-xl font-semibold text-white">
+            {mode === "lost-found" ? "Lost & Found Live View" : "Attire Compliance Live View"}
+          </h1>
+          <p className="text-slate-400 text-sm">
+            Live source: <span className="text-slate-300">{API_BASE}</span>
+          </p>
+          <p className="text-slate-500 text-xs mt-1">
+            Active cards stay on top. Paused cards move below. Fisheye cards are grouped first.
+          </p>
+        </div>
+
+        <div className="text-right">
+          <div className="text-xs text-slate-400">
+            Live cameras: <span className="text-slate-300">{liveCount}</span>
+          </div>
+          <div className="text-xs text-slate-400">
+            Active now: <span className="text-slate-300">{activeCamIds.length}</span>
+          </div>
+        </div>
+
+        {err ? (
+          <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg">
+            {err}
+          </div>
+        ) : null}
       </div>
 
-      {err ? (
-        <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/30 px-3 py-2 rounded-lg">
-          {err}
-        </div>
-      ) : null}
-    </div>
-
-    <div className="grid grid-cols-1 2xl:grid-cols-2 gap-5 w-full">
-      {cams.map(({ camId, cam, meta }) => {
-        const hasLive = !!cam;
-        const lostCount = cam?.lost_items?.length ?? 0;
-
-        const fish = isFisheye(camId, meta);
-        const camStatus = cameraStatus[camId] || ({} as CameraStatus);
-        const videoEnded = !!camStatus.video_ended;
-
-        const detectionEnabled = detectionConfig[camId] !== false && !videoEnded;
-        const isUpdating = !!updatingDetection[camId];
-
-        const allDets: LiveDet[] = detectionEnabled
-          ? (((cam?.views || []).flatMap((v) => (v?.detections || v?.dets || []) as LiveDet[])) as LiveDet[])
-          : [];
-
-        const streamUrls_ = getStreamUrls(camId, meta);
-        const isRtsp = !!meta?.is_rtsp;
-
-        const overrideState = fisheyeOverride[camId];
-        const vt = String(meta?.videoType || "").toLowerCase();
-
-        const badgeText =
-          overrideState == null
-            ? fish
-              ? vt
-                ? `FISHEYE (${vt})`
-                : "FISHEYE"
-              : vt
-              ? `NORMAL (${vt})`
-              : "NORMAL"
-            : fish
-            ? "FISHEYE (forced)"
-            : "NORMAL (forced)";
-
-        const key0 = `${camId}:v0`;
-        const ratio0 = aspectMap[key0] || 1.3333333;
-
-        const keyA = `${camId}:A`;
-        const keyB = `${camId}:B`;
-        const ratioA = aspectMap[keyA] || 1.3333333;
-        const ratioB = aspectMap[keyB] || 1.3333333;
-
-        return (
-          <div
-            key={camId}
-            className="rounded-2xl border border-slate-700/50 bg-slate-900/40 overflow-hidden w-full h-full"
-          >
-            <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-              <div className="text-white font-medium flex items-center gap-2">
-                {meta?.name || camId}
-
-                <button
-                  onClick={() => toggleOverride(camId)}
-                  className={`text-[10px] px-2 py-0.5 rounded-full border transition ${
-                    fish
-                      ? "border-emerald-500/40 text-emerald-200 bg-emerald-500/10 hover:bg-emerald-500/20"
-                      : "border-slate-600/40 text-slate-300 bg-slate-800/20 hover:bg-slate-800/35"
-                  }`}
-                  title="Click to toggle: auto → fisheye → normal → auto"
-                >
-                  {badgeText}
-                </button>
-
-                {isUpdating && <span className="text-[10px] text-slate-400">updating...</span>}
-
-                {videoEnded && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
-                    ENDED
-                  </span>
-                )}
-              </div>
-
-              <div className="text-xs text-slate-400">
-                REC •{" "}
-                {new Date().toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                })}
-              </div>
-            </div>
-
-            <div className="p-3 space-y-3">
-              {!hasLive ? (
-                <div className="rounded-xl border border-slate-700/40 overflow-hidden">
-                  <PlaceholderFrame label="No live pipeline data (pipelines_live not running for this cam_id)" />
-                  <StatusStrip
-                    lostCount={0}
-                    hasLive={false}
-                    detectionEnabled={false}
-                    onToggleDetection={handleToggleDetection}
-                    camId={camId}
-                  />
-                </div>
-              ) : !fish ? (
-                <div className="rounded-xl border border-slate-700/40 overflow-hidden">
-                  <div className="w-full relative bg-black rounded-lg" style={{ aspectRatio: String(ratio0) }}>
-                    <MjpegStream
-                      url={streamUrls_.normal}
-                      camId={camId}
-                      viewId={0}
-                      detectionEnabled={detectionEnabled}
-                      showOverlays={false}
-                      onAspect={(r) => setAspect(key0, r)}
-                      videoEnded={videoEnded}
-                      onRestart={() => handleRestartCamera(camId)}
-                    />
-
-                    {detectionEnabled && (
-                      <div className="absolute inset-0 pointer-events-none">
-                        {allDets
-                          .filter((d) => Number(d?.view_id ?? 0) === 0)
-                          .map((d, i) => {
-                            const box = toPctBox(d);
-                            if (!box) return null;
-
-                            return (
-                              <div
-                                key={`n-${camId}-${i}`}
-                                className={`absolute border-2 rounded-md ${detColor(d)}`}
-                                style={{
-                                  left: `${clamp(box.x, 0, 100)}%`,
-                                  top: `${clamp(box.y, 0, 100)}%`,
-                                  width: `${clamp(box.w, 0, 100)}%`,
-                                  height: `${clamp(box.h, 0, 100)}%`,
-                                }}
-                              >
-                                <div className="absolute -top-6 left-0 px-2 py-1 text-xs rounded-md bg-black/70 text-white border border-white/10 whitespace-nowrap">
-                                  {detLabel(d)}
-                                </div>
-                              </div>
-                            );
-                          })}
-                      </div>
-                    )}
-                  </div>
-
-                  <StatusStrip
-                    lostCount={detectionEnabled ? lostCount : 0}
-                    hasLive={true}
-                    detectionEnabled={detectionEnabled}
-                    onToggleDetection={handleToggleDetection}
-                    onRestartCamera={handleRestartCamera}
-                    camId={camId}
-                    cameraStatus={camStatus}
-                    isRestarting={restartingCameras[camId]}
-                  />
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="rounded-xl border border-slate-700/40 overflow-hidden">
-                    <div className="px-3 py-2 text-xs text-slate-300 bg-slate-950/40 border-b border-slate-700/40">
-                      Group A (2×2 grid) {!detectionEnabled && "- Display Only"}
-                    </div>
-
-                    <div
-                      className="w-full relative bg-black rounded-lg"
-                      style={{ aspectRatio: String(ratioA) }}
-                    >
-                      <MjpegStream
-                        url={streamUrls_.groupA}
-                        camId={camId}
-                        viewId={"A"}
-                        detectionEnabled={detectionEnabled}
-                        showOverlays={detectionEnabled}
-                        onAspect={(r) => setAspect(keyA, r)}
-                        videoEnded={videoEnded}
-                        onRestart={() => handleRestartCamera(camId)}
-                      />
-                    </div>
-
-                    <StatusStrip
-                      lostCount={detectionEnabled ? lostCount : 0}
-                      hasLive={true}
-                      detectionEnabled={detectionEnabled}
-                      onToggleDetection={handleToggleDetection}
-                      onRestartCamera={handleRestartCamera}
-                      camId={camId}
-                      cameraStatus={camStatus}
-                      isRestarting={restartingCameras[camId]}
-                    />
-                  </div>
-
-                  <div className="rounded-xl border border-slate-700/40 overflow-hidden">
-                    <div className="px-3 py-2 text-xs text-slate-300 bg-slate-950/40 border-b border-slate-700/40">
-                      Group B (2×2 grid) {!detectionEnabled && "- Display Only"}
-                    </div>
-
-                    <div
-                      className="w-full relative bg-black rounded-lg"
-                      style={{ aspectRatio: String(ratioB) }}
-                    >
-                      <MjpegStream
-                        url={streamUrls_.groupB}
-                        camId={camId}
-                        viewId={"B"}
-                        detectionEnabled={detectionEnabled}
-                        showOverlays={detectionEnabled}
-                        onAspect={(r) => setAspect(keyB, r)}
-                        videoEnded={videoEnded}
-                        onRestart={() => handleRestartCamera(camId)}
-                      />
-                    </div>
-
-                    <StatusStrip
-                      lostCount={detectionEnabled ? lostCount : 0}
-                      hasLive={true}
-                      detectionEnabled={detectionEnabled}
-                      onToggleDetection={handleToggleDetection}
-                      onRestartCamera={handleRestartCamera}
-                      camId={camId}
-                      cameraStatus={camStatus}
-                      isRestarting={restartingCameras[camId]}
-                    />
-                  </div>
-                </div>
-              )}
+      <div className="space-y-8">
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-white font-semibold">Active Cameras</h2>
+            <div className="text-xs text-slate-400">
+              {activeRows.length} active • max {MAX_ACTIVE_LIVE_STREAMS}
             </div>
           </div>
-        );
-      })}
+
+          {activeRows.length === 0 ? (
+            <div className="rounded-2xl border border-slate-700/50 bg-slate-900/40 p-6 text-slate-400 text-sm">
+              No active cameras. Click <span className="text-slate-200">Activate</span> on any card below.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 2xl:grid-cols-2 gap-5 w-full">
+              {activeRows.map((row) => (
+                <CameraCard
+                  key={row.camId}
+                  row={row}
+                  fisheyeOverride={fisheyeOverride}
+                  updatingDetection={updatingDetection}
+                  detectionConfig={detectionConfig}
+                  cameraStatus={cameraStatus}
+                  restartingCameras={restartingCameras}
+                  aspectMap={aspectMap}
+                  setAspect={setAspect}
+                  toggleOverride={toggleOverride}
+                  toggleActiveCamera={toggleActiveCamera}
+                  getStreamUrls={getStreamUrls}
+                  handleToggleDetection={handleToggleDetection}
+                  handleRestartCamera={handleRestartCamera}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-white font-semibold">Paused Cameras</h2>
+            <div className="text-xs text-slate-400">
+              {pausedRows.length} paused
+            </div>
+          </div>
+
+          {pausedRows.length === 0 ? (
+            <div className="rounded-2xl border border-slate-700/50 bg-slate-900/40 p-6 text-slate-400 text-sm">
+              No paused cameras.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 2xl:grid-cols-2 gap-5 w-full">
+              {pausedRows.map((row) => (
+                <CameraCard
+                  key={row.camId}
+                  row={row}
+                  fisheyeOverride={fisheyeOverride}
+                  updatingDetection={updatingDetection}
+                  detectionConfig={detectionConfig}
+                  cameraStatus={cameraStatus}
+                  restartingCameras={restartingCameras}
+                  aspectMap={aspectMap}
+                  setAspect={setAspect}
+                  toggleOverride={toggleOverride}
+                  toggleActiveCamera={toggleActiveCamera}
+                  getStreamUrls={getStreamUrls}
+                  handleToggleDetection={handleToggleDetection}
+                  handleRestartCamera={handleRestartCamera}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     </div>
-  </div>
-);
+  );
 }
 
 export default LiveViewPage;

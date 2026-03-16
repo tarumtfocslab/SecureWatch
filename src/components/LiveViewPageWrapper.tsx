@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import LostAndFoundLiveView from "./LostAndFoundLiveView";
 import { AttireComplianceLiveView } from "./AttireComplianceLiveView";
-import { LOSTFOUND_API_BASE, ATTIRE_API_BASE } from "../api/base";
 
+const LOSTFOUND_API_BASE =
+  (import.meta as any).env?.VITE_LOSTFOUND_API_BASE?.replace(/\/$/, "") ||
+  "http://127.0.0.1:8000";
+
+const ATTIRE_API_BASE =
+  (import.meta as any).env?.VITE_ATTIRE_API_BASE?.replace(/\/$/, "") ||
+  "http://127.0.0.1:8001";
 
 type MonitoringMode = "lost-found" | "attire";
 

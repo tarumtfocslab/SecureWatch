@@ -5,7 +5,6 @@ import {
   WifiOff,
 } from "lucide-react";
 import type { Camera } from "../App";
-import { LOSTFOUND_API_BASE } from "../api/base";
 
 interface CameraFeedProps {
   camera: Camera;
@@ -19,13 +18,15 @@ interface CameraFeedProps {
   cycleSeconds?: number;
 }
 
-function resolveLfUrl(url?: string) {
-  if (!url) return "";
-  if (/^https?:\/\//i.test(url)) return url;
-  return `${LOSTFOUND_API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+function toSameOrigin(url?: string) {
+  if (!url) return url;
+  try {
+    const u = new URL(url, window.location.origin);
+    return u.pathname + u.search;
+  } catch {
+    return url;
+  }
 }
-
-
 
 function withBust(url?: string, token?: number | string) {
   if (!url) return "";
@@ -44,9 +45,9 @@ function isLiveMjpegUrl(url?: string) {
 
 function overlayParam(url: string, overlay: 0 | 1) {
   try {
-    const u = new URL(url);
+    const u = new URL(url, window.location.origin);
     u.searchParams.set("overlay", String(overlay));
-    return u.toString();
+    return u.pathname + u.search;
   } catch {
     const hasOverlay = /([?&])overlay=\d/.test(url);
     if (hasOverlay) {
@@ -60,13 +61,13 @@ function overlayParam(url: string, overlay: 0 | 1) {
 function toDashboardMjpeg(url?: string) {
   if (!url) return "";
   try {
-    const u = new URL(url);
+    const u = new URL(url, window.location.origin);
     u.pathname = u.pathname.replace(
       "/api/live/mjpeg/",
       "/api/live/mjpeg_dashboard/"
     );
     u.searchParams.delete("overlay");
-    return u.toString();
+    return u.pathname + u.search;
   } catch {
     let out = url.replace(
       "/api/live/mjpeg/",
@@ -78,6 +79,24 @@ function toDashboardMjpeg(url?: string) {
   }
 }
 
+function toDashboardSnapshot(url?: string) {
+  if (!url) return "";
+  try {
+    const u = new URL(url, window.location.origin);
+    u.pathname = u.pathname
+      .replace("/api/live/mjpeg_dashboard/", "/api/live/dashboard_frame/")
+      .replace("/api/live/mjpeg/", "/api/live/dashboard_frame/");
+    u.searchParams.delete("overlay");
+    return u.pathname + u.search;
+  } catch {
+    let out = url
+      .replace("/api/live/mjpeg_dashboard/", "/api/live/dashboard_frame/")
+      .replace("/api/live/mjpeg/", "/api/live/dashboard_frame/");
+    out = out.replace(/([?&])overlay=\d/g, "");
+    out = out.replace(/[?&]$/, "");
+    return out;
+  }
+}
 
 function toNormalCleanMjpeg(url?: string) {
   if (!url) return "";
@@ -117,6 +136,15 @@ function detectIsFisheye(cam: any): boolean {
   return false;
 }
 
+function stableOffsetFromId(id: string | number | undefined) {
+  const s = String(id ?? "");
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  }
+  return hash % 12;
+}
+
 export function CameraFeed({
   camera,
   groupViews,
@@ -131,10 +159,12 @@ export function CameraFeed({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const warnTimerRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
+  const snapshotStartTimerRef = useRef<number | null>(null);
   const hasPlayedRef = useRef(false);
 
   const [videoFailed, setVideoFailed] = useState(false);
   const [retryToken, setRetryToken] = useState<number>(0);
+  const [snapshotTick, setSnapshotTick] = useState<number>(0);
   const [playbackState, setPlaybackState] = useState<
     "playing" | "loading" | "buffering" | "paused" | "offline" | "error"
   >("loading");
@@ -177,6 +207,7 @@ export function CameraFeed({
     setVideoFailed(false);
     setPlaybackState("loading");
     setRetryToken(0);
+    setSnapshotTick(Date.now());
 
     if (warnTimerRef.current) {
       window.clearTimeout(warnTimerRef.current);
@@ -185,6 +216,10 @@ export function CameraFeed({
     if (retryTimerRef.current) {
       window.clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
+    }
+    if (snapshotStartTimerRef.current) {
+      window.clearTimeout(snapshotStartTimerRef.current);
+      snapshotStartTimerRef.current = null;
     }
   }, [camera.id]);
 
@@ -202,6 +237,7 @@ export function CameraFeed({
     setVideoFailed(false);
     setPlaybackState("loading");
     setRetryToken(0);
+    setSnapshotTick(Date.now());
 
     if (warnTimerRef.current) {
       window.clearTimeout(warnTimerRef.current);
@@ -210,6 +246,10 @@ export function CameraFeed({
     if (retryTimerRef.current) {
       window.clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
+    }
+    if (snapshotStartTimerRef.current) {
+      window.clearTimeout(snapshotStartTimerRef.current);
+      snapshotStartTimerRef.current = null;
     }
   }, [pageIdx]);
 
@@ -222,8 +262,8 @@ export function CameraFeed({
     if (typeof onStatusChange === "function") onStatusChange(id, status);
   };
 
-  const mp4Src = resolveLfUrl((activeCam as any).videoUrl || activeCam.videoUrl);
-  const mjpegRaw = resolveLfUrl(
+  const mp4Src = toSameOrigin((activeCam as any).videoUrl || activeCam.videoUrl);
+  const mjpegRaw = toSameOrigin(
     (activeCam as any).mjpegUrl ||
       (camera as any).mjpegUrl ||
       (activeCam as any).mjpeg_url ||
@@ -240,10 +280,22 @@ export function CameraFeed({
       : toNormalCleanMjpeg(mjpegRaw);
   }, [isRtspStream, mjpegRaw, isFisheye]);
 
+  const useLiveMjpeg = isRtspStream && (isSelected || isFullscreen);
+
   const mjpegSrc = useMemo(() => {
     if (!mjpegBase) return "";
     return withBust(mjpegBase, retryToken || undefined);
   }, [mjpegBase, retryToken]);
+
+  const snapshotBase = useMemo(() => {
+    if (!mjpegBase) return "";
+    return toDashboardSnapshot(mjpegBase);
+  }, [mjpegBase]);
+
+  const snapshotSrc = useMemo(() => {
+    if (!snapshotBase) return "";
+    return withBust(snapshotBase, snapshotTick || Date.now());
+  }, [snapshotBase, snapshotTick]);
 
   useEffect(() => {
     if (warnTimerRef.current) {
@@ -296,8 +348,47 @@ export function CameraFeed({
         window.clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
       }
+      if (snapshotStartTimerRef.current) {
+        window.clearTimeout(snapshotStartTimerRef.current);
+        snapshotStartTimerRef.current = null;
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isRtspStream || useLiveMjpeg) return;
+
+    if (retryTimerRef.current) {
+      window.clearInterval(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    if (snapshotStartTimerRef.current) {
+      window.clearTimeout(snapshotStartTimerRef.current);
+      snapshotStartTimerRef.current = null;
+    }
+
+    const refreshMs = 700;
+    const offset = stableOffsetFromId(activeCam?.id ?? camera.id) * 60;
+
+    snapshotStartTimerRef.current = window.setTimeout(() => {
+      setSnapshotTick(Date.now());
+
+      retryTimerRef.current = window.setInterval(() => {
+        setSnapshotTick(Date.now());
+      }, refreshMs) as unknown as number;
+    }, offset);
+
+    return () => {
+      if (retryTimerRef.current) {
+        window.clearInterval(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      if (snapshotStartTimerRef.current) {
+        window.clearTimeout(snapshotStartTimerRef.current);
+        snapshotStartTimerRef.current = null;
+      }
+    };
+  }, [isRtspStream, useLiveMjpeg, activeCam?.id, camera.id]);
 
   const getStatusColor = () => {
     switch (camera.status) {
@@ -358,7 +449,7 @@ export function CameraFeed({
                 <p className="text-slate-300 text-sm">Stream can’t load</p>
                 <a
                   className="text-blue-400 text-xs underline"
-                  href={mjpegSrc}
+                  href={useLiveMjpeg ? mjpegSrc : snapshotSrc}
                   target="_blank"
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
@@ -367,11 +458,11 @@ export function CameraFeed({
                 </a>
               </div>
             </div>
-          ) : (
+          ) : useLiveMjpeg ? (
             <img
               className={mediaClass}
               src={mjpegSrc}
-              alt="rtsp"
+              alt="rtsp-live"
               onLoad={() => {
                 hasPlayedRef.current = true;
                 setPlaybackState("playing");
@@ -397,6 +488,26 @@ export function CameraFeed({
                   setPlaybackState("loading");
                   setRetryToken(Date.now());
                 }, 2500);
+              }}
+            />
+          ) : (
+            <img
+              className={mediaClass}
+              src={snapshotSrc}
+              alt="rtsp-snapshot"
+              onLoad={() => {
+                hasPlayedRef.current = true;
+                setPlaybackState("playing");
+                setVideoFailed(false);
+                reportStatus(camera.id, "online");
+                if (warnTimerRef.current) {
+                  window.clearTimeout(warnTimerRef.current);
+                  warnTimerRef.current = null;
+                }
+              }}
+              onError={(e) => {
+                setPlaybackState("buffering");
+                reportStatus(camera.id, "warning");
               }}
             />
           )
@@ -476,7 +587,9 @@ export function CameraFeed({
             : videoFailed
             ? "ERROR"
             : playbackState === "playing"
-            ? "PLAYING"
+            ? useLiveMjpeg
+              ? "LIVE"
+              : "SNAPSHOT"
             : playbackState === "buffering"
             ? "BUFFERING"
             : playbackState === "paused"
