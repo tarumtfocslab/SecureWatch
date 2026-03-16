@@ -153,7 +153,7 @@ const [lostFoundOfflineStem, setLostFoundOfflineStem] = useState<string | null>(
   });
   const notifyAudioRef = useRef<HTMLAudioElement | null>(null);
   useEffect(() => {
-    notifyAudioRef.current = new Audio("/sounds/notify.wav");
+    notifyAudioRef.current = new Audio(`${import.meta.env.BASE_URL}sounds/notify.wav`);
     notifyAudioRef.current.preload = "auto";
   }, []);
 

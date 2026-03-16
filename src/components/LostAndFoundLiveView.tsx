@@ -13,9 +13,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-const API_BASE =
-  (import.meta as any).env?.VITE_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://127.0.0.1:8000";
+import { LOSTFOUND_API_BASE } from "../api/base";
+const API_BASE = LOSTFOUND_API_BASE;
 
 type LiveDet = Record<string, any>;
 
