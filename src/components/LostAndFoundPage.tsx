@@ -11,7 +11,11 @@ import {
   Filter,
   Clock,
 } from "lucide-react";
-import { LOSTFOUND_API_BASE, buildApiUrl } from "../api/base";
+import {
+  LOSTFOUND_API_BASE,
+  buildApiUrl,
+  resolveLostFoundUrl,
+} from "../api/base";
 
 type LostFoundItem = {
   id: string;
@@ -49,16 +53,15 @@ function isSolved(x: LostFoundItem) {
 }
 
 async function apiGetItems(signal?: AbortSignal): Promise<LostFoundItem[]> {
-  const res = await fetch(
-    buildApiUrl(LOSTFOUND_API_BASE, "/api/lostfound/items"),
-    { signal }
-  );
+  const res = await fetch(buildApiUrl(LOSTFOUND_API_BASE, "/api/lostfound/items"), {
+    signal,
+  });
   if (!res.ok) throw new Error("Failed to load items");
   const js = await res.json();
-  const items: LostFoundItem[] = Array.isArray(js)
-    ? js
-    : Array.isArray(js?.items)
+  const items: LostFoundItem[] = Array.isArray(js?.items)
     ? js.items
+    : Array.isArray(js)
+    ? js
     : [];
 
   return items
@@ -77,22 +80,14 @@ async function apiGetItems(signal?: AbortSignal): Promise<LostFoundItem[]> {
           ? it.firstSeenTs
           : typeof it.first_seen_ts === "number"
           ? it.first_seen_ts
-          : typeof it.firstSeen === "number"
-          ? it.firstSeen
           : undefined,
       lastSeenTs:
         typeof it.lastSeenTs === "number"
           ? it.lastSeenTs
           : typeof it.last_seen_ts === "number"
           ? it.last_seen_ts
-          : typeof it.lastSeen === "number"
-          ? it.lastSeen
           : undefined,
-      imageUrl: it.imageUrl
-        ? buildApiUrl(LOSTFOUND_API_BASE, String(it.imageUrl))
-        : it.image_url
-        ? buildApiUrl(LOSTFOUND_API_BASE, String(it.image_url))
-        : null,
+      imageUrl: resolveLostFoundUrl(it.imageUrl || it.image_url || null),
       notes: it.notes ?? "",
     }));
 }
