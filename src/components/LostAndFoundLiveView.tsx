@@ -93,6 +93,18 @@ function shallowEqualOverrides(
   return true;
 }
 
+function readStoredActiveCamIds(mode: "lost-found" | "attire"): string[] {
+  try {
+    const raw = localStorage.getItem(`live_active_cam_ids_v1_${mode}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((x) => normalizeCamId(String(x || ""))).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 function toPctBox(det: LiveDet): { x: number; y: number; w: number; h: number } | null {
   if (
     typeof det?.x === "number" &&
@@ -828,8 +840,19 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   const [restartingCameras, setRestartingCameras] = useState<Record<string, boolean>>({});
 
   const [fisheyeOverride, setFisheyeOverride] = useState<Record<string, ViewModeOverride>>({});
-  const [activeCamIds, setActiveCamIds] = useState<string[]>([]);
+  const [activeCamIds, setActiveCamIds] = useState<string[]>(() => readStoredActiveCamIds(mode));
   const savingOverrideRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        `live_active_cam_ids_v1_${mode}`,
+        JSON.stringify(activeCamIds.map((id) => normalizeCamId(id)))
+      );
+    } catch {
+      // ignore
+    }
+  }, [activeCamIds, mode]);
 
   const loadViewModeOverrides = async () => {
     if (!API_BASE) return;
@@ -1113,30 +1136,41 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
 
   useEffect(() => {
     setActiveCamIds((prev) => {
-      const validLiveIds = camsBase.filter(({ cam }) => !!cam).map(({ camId }) => camId);
-      const filteredPrev = prev.filter((id) => validLiveIds.includes(id));
+      const validLiveIds = camsBase.filter(({ cam }) => !!cam).map(({ camId }) => normalizeCamId(camId));
+      const filteredPrev = prev
+        .map((id) => normalizeCamId(id))
+        .filter((id) => validLiveIds.includes(id));
 
-      if (filteredPrev.length > 0) return filteredPrev;
+      if (filteredPrev.length > 0) {
+        return filteredPrev.slice(0, MAX_ACTIVE_LIVE_STREAMS);
+      }
+
       return validLiveIds.slice(0, MAX_ACTIVE_LIVE_STREAMS);
     });
   }, [camsBase]);
 
-  const activeLiveSet = useMemo(() => new Set(activeCamIds), [activeCamIds]);
+  const activeLiveSet = useMemo(
+    () => new Set(activeCamIds.map((id) => normalizeCamId(id))),
+    [activeCamIds]
+  );
 
   const toggleActiveCamera = (camId: string) => {
+    const key = normalizeCamId(camId);
+
     setActiveCamIds((prev) => {
-      const exists = prev.includes(camId);
+      const normalizedPrev = prev.map((id) => normalizeCamId(id));
+      const exists = normalizedPrev.includes(key);
 
       if (exists) {
-        return prev.filter((id) => id !== camId);
+        return normalizedPrev.filter((id) => id !== key);
       }
 
-      if (prev.length >= MAX_ACTIVE_LIVE_STREAMS) {
+      if (normalizedPrev.length >= MAX_ACTIVE_LIVE_STREAMS) {
         alert(`Max ${MAX_ACTIVE_LIVE_STREAMS} active live streams at one time.`);
-        return prev;
+        return normalizedPrev;
       }
 
-      return [...prev, camId];
+      return [...normalizedPrev, key];
     });
   };
 
@@ -1197,7 +1231,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
       meta,
       cam,
       fish: isFisheye(camId, meta),
-      isActiveStream: activeLiveSet.has(camId),
+      isActiveStream: activeLiveSet.has(normalizeCamId(camId)),
     }));
   }, [camsBase, activeLiveSet, fisheyeOverride]);
 
