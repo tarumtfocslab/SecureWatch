@@ -1,660 +1,424 @@
-// src/pages/LostAndFoundEventsPage.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Search,
   RefreshCw,
-  CheckCircle2,
-  Trash2,
-  StickyNote,
-  Download,
-  X,
-  Image as ImageIcon,
+  Search,
   Filter,
-  Clock,
+  Image as ImageIcon,
+  AlertCircle,
+  CheckCircle2,
+  Clock3,
+  Camera,
+  Wifi,
+  HardDrive,
 } from "lucide-react";
-
-const API_BASE =
-  (import.meta as any).env?.VITE_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://127.0.0.1:8000";
+import { LOSTFOUND_API_BASE } from "../api/base";
 
 type LostFoundItem = {
-  id: string;
-  module?: string;
-  source?: string; // live | upload | offline
-  cameraId?: string;
-  videoId?: string;
-  location?: string;
+  id?: string | number;
+  event_id?: string;
+  source?: string;
+  camera?: string;
+  camera_id?: string;
+  item_label?: string;
   label?: string;
-  status?: "lost" | "solved" | string;
-  firstSeenTs?: number;
-  lastSeenTs?: number;
-  imageUrl?: string | null;
+  class_name?: string;
+  status?: string;
+  timestamp?: string;
+  created_at?: string;
+  event_time?: string;
+  note?: string;
   notes?: string;
-  updatedAt?: number;
-  raw?: any;
+  image_url?: string;
+  snapshot_url?: string;
+  roi_name?: string;
+  roi_id?: string | number;
+  confidence?: number;
 };
 
-function clamp(n: number, a: number, b: number) {
-  return Math.max(a, Math.min(b, n));
+function apiUrl(path?: string) {
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${LOSTFOUND_API_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
 }
 
-function fmtTs(ts?: number) {
-  const t = Number(ts || 0);
-  if (!t) return "-";
-  const ms = t > 2_000_000_000_000 ? t : t * 1000;
-  return new Date(ms).toLocaleString();
+async function fetchLostFoundItems(): Promise<LostFoundItem[]> {
+  const res = await fetch(apiUrl("/api/lostfound/items"), {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch items (${res.status}) ${text}`);
+  }
+
+  const data = await res.json();
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  return [];
 }
 
-function isLost(x: LostFoundItem) {
-  return (x.status || "lost").toLowerCase().includes("lost");
-}
-function isSolved(x: LostFoundItem) {
-  return (x.status || "").toLowerCase().includes("solv");
-}
-
-async function apiGetItems(signal?: AbortSignal): Promise<LostFoundItem[]> {
-  const res = await fetch(`${API_BASE}/api/lostfound/items`, { signal });
-  if (!res.ok) throw new Error("Failed to load items");
-  const js = await res.json();
-  const items: LostFoundItem[] = Array.isArray(js?.items) ? js.items : [];
-
-  return items
-    .filter((it) => it && typeof it === "object" && typeof it.id === "string")
-    .map((it) => ({
-      ...it,
-      id: String(it.id),
-      label: it.label ? String(it.label) : "Unknown",
-      location: it.location ? String(it.location) : "Unknown",
-      status: (it.status || "lost") as any,
-      source: it.source ? String(it.source) : "unknown",
-    }));
+function formatDateTime(value?: string) {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString();
 }
 
-async function apiSolve(itemId: string) {
-  const res = await fetch(
-    `${API_BASE}/api/lostfound/item/${encodeURIComponent(itemId)}/solve`,
-    { method: "POST" }
-  );
-  if (!res.ok) throw new Error("Solve failed");
-  return res.json();
+function getItemLabel(item: LostFoundItem) {
+  return item.item_label || item.label || item.class_name || "Unknown Item";
 }
 
-async function apiUpdateNotes(itemId: string, notes: string) {
-  const res = await fetch(
-    `${API_BASE}/api/lostfound/item/${encodeURIComponent(itemId)}/update`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notes }),
-    }
-  );
-  if (!res.ok) throw new Error("Update notes failed");
-  return res.json();
+function getTime(item: LostFoundItem) {
+  return item.timestamp || item.created_at || item.event_time || "";
 }
 
-async function apiDelete(itemId: string) {
-  const res = await fetch(
-    `${API_BASE}/api/lostfound/item/${encodeURIComponent(itemId)}`,
-    { method: "DELETE" }
-  );
-  if (!res.ok) throw new Error("Delete failed");
-  return res.json();
+function statusBadgeClass(status?: string) {
+  const s = String(status || "").toLowerCase();
+  if (s === "solved") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (s === "lost") return "bg-amber-50 text-amber-700 border-amber-200";
+  return "bg-slate-50 text-slate-700 border-slate-200";
 }
 
-function downloadBlob(filename: string, data: Blob) {
-  const url = URL.createObjectURL(data);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-async function apiExportCsv(params: {
-  q?: string;
-  status?: string;
-  source?: string;
-  label?: string;
-  location?: string;
-}) {
-  const usp = new URLSearchParams();
-  if (params.q) usp.set("q", params.q);
-  if (params.status) usp.set("status", params.status);
-  if (params.source) usp.set("source", params.source);
-  if (params.label) usp.set("label", params.label);
-  if (params.location) usp.set("location", params.location);
-
-  const res = await fetch(
-    `${API_BASE}/api/lostfound/items/export.csv?${usp.toString()}`
-  );
-  if (!res.ok) throw new Error("Export CSV failed");
-  const blob = await res.blob();
-  downloadBlob("lost_found_reports.csv", blob);
-}
-
-function Chip({
-  children,
-  tone = "neutral",
-}: {
-  children: React.ReactNode;
-  tone?: "neutral" | "red" | "green";
-}) {
-  const cls =
-    tone === "red"
-      ? "bg-rose-500/15 text-rose-200 ring-1 ring-rose-400/25"
-      : tone === "green"
-      ? "bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/25"
-      : "bg-white/5 text-slate-200 ring-1 ring-white/10";
-  return (
-    <div className={`px-3 py-1 rounded-full text-xs ${cls}`}>{children}</div>
-  );
-}
-
-function Modal({
-  open,
-  onClose,
-  title,
-  children,
-}: {
-  open: boolean;
-  onClose: () => void;
-  title: string;
-  children: React.ReactNode;
-}) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      {/* ✅ Bigger modal */}
-      <div className="relative w-[min(1400px,96vw)] h-[92vh] overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10 shadow-2xl">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
-          <div className="text-slate-100 font-semibold">{title}</div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-white/10 text-slate-200"
-            aria-label="Close"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* ✅ Use full modal height correctly */}
-        <div className="p-4 h-[calc(92vh-56px)] overflow-auto">{children}</div>
-      </div>
-    </div>
-  );
+function sourceBadge(item: LostFoundItem) {
+  const s = String(item.source || "").toLowerCase();
+  if (s === "live") {
+    return {
+      label: "Live",
+      icon: <Wifi className="h-3.5 w-3.5" />,
+      className: "bg-blue-50 text-blue-700 border-blue-200",
+    };
+  }
+  if (s === "offline" || s === "upload") {
+    return {
+      label: "Offline",
+      icon: <HardDrive className="h-3.5 w-3.5" />,
+      className: "bg-purple-50 text-purple-700 border-purple-200",
+    };
+  }
+  return {
+    label: item.source || "-",
+    icon: <Camera className="h-3.5 w-3.5" />,
+    className: "bg-slate-50 text-slate-700 border-slate-200",
+  };
 }
 
 export default function LostAndFoundEventsPage() {
   const [items, setItems] = useState<LostFoundItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
-  const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "lost" | "solved">(
-    "all"
-  );
-  const [sourceFilter, setSourceFilter] = useState<
-    "all" | "live" | "upload" | "offline"
-  >("all");
-  const [labelFilter, setLabelFilter] = useState<string>("all");
-  const [locationFilter, setLocationFilter] = useState<string>("all");
-
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshSec, setRefreshSec] = useState(2);
-
-  // image modal
-  const [imgOpen, setImgOpen] = useState(false);
-  const [imgUrl, setImgUrl] = useState<string>("");
-  const [imgTitle, setImgTitle] = useState<string>("Evidence");
-  const [zoom, setZoom] = useState(1);
-
-  // notes modal
-  const [notesOpen, setNotesOpen] = useState(false);
-  const [notesItem, setNotesItem] = useState<LostFoundItem | null>(null);
-  const [notesDraft, setNotesDraft] = useState("");
-
-  const abortRef = useRef<AbortController | null>(null);
-
-  async function load() {
-    abortRef.current?.abort();
-    const ac = new AbortController();
-    abortRef.current = ac;
-
-    setLoading(true);
-    setErr(null);
+  async function loadItems(showRefreshing = false) {
     try {
-      const data = await apiGetItems(ac.signal);
-      setItems(data);
-    } catch (e: any) {
-      if (String(e?.name || "") !== "AbortError")
-        setErr(e?.message || "Failed to load");
+      setError("");
+      if (showRefreshing) setRefreshing(true);
+      else setLoading(true);
+
+      const rows = await fetchLostFoundItems();
+      setItems(rows);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load events");
+      setItems([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadItems(false);
   }, []);
 
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const sec = clamp(Number(refreshSec || 2), 1, 30);
-    const t = setInterval(() => load(), sec * 1000);
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefresh, refreshSec]);
+  const filteredItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
 
-  const labels = useMemo(() => {
-    const s = new Set<string>();
-    for (const it of items) if (it.label) s.add(it.label);
-    return ["all", ...Array.from(s).sort((a, b) => a.localeCompare(b))];
-  }, [items]);
-
-  const locations = useMemo(() => {
-    const s = new Set<string>();
-    for (const it of items) if (it.location) s.add(it.location);
-    return ["all", ...Array.from(s).sort((a, b) => a.localeCompare(b))];
-  }, [items]);
-
-  const filtered = useMemo(() => {
-    const qq = q.trim().toLowerCase();
-    return items.filter((it) => {
-      if (statusFilter === "lost" && !isLost(it)) return false;
-      if (statusFilter === "solved" && !isSolved(it)) return false;
-
-      const src = (it.source || "").toLowerCase();
-      if (sourceFilter !== "all") {
-        if (sourceFilter === "offline") {
-          const looksOffline = !!it.videoId && !it.cameraId;
-          if (!looksOffline && src !== "offline") return false;
-        } else if (src !== sourceFilter) {
-          if (!(sourceFilter === "upload" && src === "offline")) return false;
-        }
-      }
-
-      if (labelFilter !== "all" && (it.label || "") !== labelFilter)
-        return false;
-      if (locationFilter !== "all" && (it.location || "") !== locationFilter)
-        return false;
-
-      if (!qq) return true;
-      const hay = [
-        it.id,
-        it.label,
-        it.location,
-        it.cameraId,
-        it.videoId,
-        it.source,
-        it.status,
-        it.notes,
+    return items.filter((item) => {
+      const itemText = [
+        getItemLabel(item),
+        item.camera,
+        item.camera_id,
+        item.source,
+        item.status,
+        item.note,
+        item.notes,
+        item.roi_name,
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
 
-      return hay.includes(qq);
+      const matchesQuery = !q || itemText.includes(q);
+      const matchesStatus =
+        statusFilter === "all" ||
+        String(item.status || "").toLowerCase() === statusFilter;
+      const matchesSource =
+        sourceFilter === "all" ||
+        String(item.source || "").toLowerCase() === sourceFilter;
+
+      return matchesQuery && matchesStatus && matchesSource;
     });
-  }, [items, q, statusFilter, sourceFilter, labelFilter, locationFilter]);
+  }, [items, query, statusFilter, sourceFilter]);
 
-  const counts = useMemo(() => {
-    const lost = filtered.filter(isLost).length;
-    const solved = filtered.filter(isSolved).length;
-    return { total: filtered.length, lost, solved };
-  }, [filtered]);
+  const summary = useMemo(() => {
+    const total = items.length;
+    const lost = items.filter(
+      (x) => String(x.status || "").toLowerCase() === "lost"
+    ).length;
+    const solved = items.filter(
+      (x) => String(x.status || "").toLowerCase() === "solved"
+    ).length;
+    const live = items.filter(
+      (x) => String(x.source || "").toLowerCase() === "live"
+    ).length;
+    const offline = items.filter((x) => {
+      const s = String(x.source || "").toLowerCase();
+      return s === "offline" || s === "upload";
+    }).length;
 
-  async function onSolve(it: LostFoundItem) {
-    try {
-      await apiSolve(it.id);
-      await load();
-    } catch (e: any) {
-      alert(e?.message || "Solve failed");
-    }
-  }
-
-  async function onDelete(it: LostFoundItem) {
-    const ok = confirm("Delete this item from Reports? (It will be hidden)");
-    if (!ok) return;
-    try {
-      await apiDelete(it.id);
-      await load();
-    } catch (e: any) {
-      alert(e?.message || "Delete failed");
-    }
-  }
-
-  function openNotes(it: LostFoundItem) {
-    setNotesItem(it);
-    setNotesDraft(String(it.notes || ""));
-    setNotesOpen(true);
-  }
-
-  async function saveNotes() {
-    if (!notesItem) return;
-    try {
-      await apiUpdateNotes(notesItem.id, notesDraft);
-      setNotesOpen(false);
-      setNotesItem(null);
-      await load();
-    } catch (e: any) {
-      alert(e?.message || "Update notes failed");
-    }
-  }
-
-  function openImage(it: LostFoundItem) {
-    const url = String(it.imageUrl || "");
-    if (!url) return;
-    setImgUrl(url);
-    setImgTitle(`${it.label || "Evidence"} • ${it.location || ""}`);
-    setZoom(2);
-    setImgOpen(true);
-  }
+    return { total, lost, solved, live, offline };
+  }, [items]);
 
   return (
-    <div className="min-h-screen bg-[#0b1220] text-slate-100">
-      {/* ✅ full-width page (no max-w) */}
-      <div className="w-full px-6 py-6">
-        <div className="text-slate-300 text-sm mb-3">
-          View, search, solve, add notes, export CSV.
+    <div className="space-y-6 p-4 md:p-6">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              Lost &amp; Found Events
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              View detected lost item records from live and offline sources.
+            </p>
+          </div>
+
+          <button
+            onClick={() => loadItems(true)}
+            disabled={refreshing}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </button>
         </div>
 
-        {/* TOP PANEL */}
-        <div className="rounded-2xl bg-[#0e1627]/70 ring-1 ring-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.35)] p-4">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search (id / label / location / cameraId / notes...)"
-                className="w-full pl-10 pr-4 py-2.5 rounded-full bg-[#0b1220] ring-1 ring-white/10 focus:ring-white/20 outline-none text-sm placeholder:text-slate-500"
-              />
-            </div>
-
-            <div className="flex items-center gap-2 text-sm">
-              <div className="hidden md:flex items-center gap-2 px-3 py-2 rounded-full bg-[#0b1220] ring-1 ring-white/10 text-slate-300">
-                <Filter className="w-4 h-4 text-slate-400" />
-                <span>Filters</span>
-              </div>
-
-              <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-[#0b1220] ring-1 ring-white/10">
-                <span className="text-slate-400 text-xs">Auto</span>
-                <button
-                  onClick={() => setAutoRefresh((v) => !v)}
-                  className={
-                    "px-2.5 py-1 rounded-lg text-xs font-semibold ring-1 transition " +
-                    (autoRefresh
-                      ? "bg-emerald-500/15 text-emerald-200 ring-emerald-400/30"
-                      : "bg-rose-500/15 text-rose-200 ring-rose-400/30")
-                  }
-                >
-                  {autoRefresh ? "ON" : "OFF"}
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-[#0b1220] ring-1 ring-white/10">
-                <Clock className="w-4 h-4 text-slate-400" />
-                <input
-                  type="number"
-                  min={1}
-                  max={30}
-                  value={refreshSec}
-                  onChange={(e) => setRefreshSec(Number(e.target.value || 2))}
-                  className="w-12 bg-transparent outline-none text-slate-200 text-sm"
-                  disabled={!autoRefresh}
-                />
-                <span className="text-slate-400 text-xs">sec</span>
-              </div>
-
-              <button
-                onClick={load}
-                className="px-3 py-2 rounded-full bg-[#0b1220] ring-1 ring-white/10 hover:ring-white/20 transition"
-                title="Refresh"
-              >
-                <RefreshCw
-                  className={`w-4 h-4 ${
-                    loading ? "animate-spin" : ""
-                  } text-slate-300`}
-                />
-              </button>
-
-              <button
-                onClick={() =>
-                  apiExportCsv({
-                    q: q.trim() || undefined,
-                    status: statusFilter === "all" ? "" : statusFilter,
-                    source: sourceFilter === "all" ? "" : sourceFilter,
-                    label: labelFilter === "all" ? "" : labelFilter,
-                    location: locationFilter === "all" ? "" : locationFilter,
-                  })
-                }
-                className="hidden lg:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-500/15 hover:bg-sky-500/20 ring-1 ring-sky-400/25 text-sky-200 transition"
-              >
-                <Download className="w-4 h-4" />
-                Export CSV
-              </button>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-medium text-slate-500">Total</div>
+            <div className="mt-2 text-2xl font-bold text-slate-900">
+              {summary.total}
             </div>
           </div>
 
-          {/* Row 2 */}
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+            <div className="text-xs font-medium text-amber-700">Lost</div>
+            <div className="mt-2 text-2xl font-bold text-amber-800">
+              {summary.lost}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+            <div className="text-xs font-medium text-emerald-700">Solved</div>
+            <div className="mt-2 text-2xl font-bold text-emerald-800">
+              {summary.solved}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
+            <div className="text-xs font-medium text-blue-700">Live</div>
+            <div className="mt-2 text-2xl font-bold text-blue-800">
+              {summary.live}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-purple-200 bg-purple-50 p-4">
+            <div className="text-xs font-medium text-purple-700">Offline</div>
+            <div className="mt-2 text-2xl font-bold text-purple-800">
+              {summary.offline}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid gap-3 lg:grid-cols-[1fr_180px_180px]">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search item, camera, ROI, notes..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm outline-none ring-0 transition focus:border-slate-400"
+            />
+          </div>
+
+          <div className="relative">
+            <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="px-4 py-2.5 rounded-full bg-[#0b1220] ring-1 ring-white/10 text-sm outline-none hover:ring-white/20 transition"
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-slate-400"
             >
-              <option value="all">Status: All</option>
-              <option value="lost">Status: Lost</option>
-              <option value="solved">Status: Solved</option>
+              <option value="all">All Status</option>
+              <option value="lost">Lost</option>
+              <option value="solved">Solved</option>
             </select>
+          </div>
 
+          <div className="relative">
+            <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <select
               value={sourceFilter}
-              onChange={(e) => setSourceFilter(e.target.value as any)}
-              className="px-4 py-2.5 rounded-full bg-[#0b1220] ring-1 ring-white/10 text-sm outline-none hover:ring-white/20 transition"
+              onChange={(e) => setSourceFilter(e.target.value)}
+              className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-slate-400"
             >
-              <option value="all">Source: All</option>
-              <option value="live">Source: Live</option>
-              <option value="upload">Source: Upload/Offline</option>
-              <option value="offline">Source: Offline</option>
+              <option value="all">All Sources</option>
+              <option value="live">Live</option>
+              <option value="offline">Offline</option>
+              <option value="upload">Upload</option>
             </select>
-
-            <select
-              value={labelFilter}
-              onChange={(e) => setLabelFilter(e.target.value)}
-              className="px-4 py-2.5 rounded-full bg-[#0b1220] ring-1 ring-white/10 text-sm outline-none hover:ring-white/20 transition"
-            >
-              {labels.map((x) => (
-                <option key={x} value={x}>
-                  {x === "all" ? "Label: All" : `Label: ${x}`}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={locationFilter}
-              onChange={(e) => setLocationFilter(e.target.value)}
-              className="px-4 py-2.5 rounded-full bg-[#0b1220] ring-1 ring-white/10 text-sm outline-none hover:ring-white/20 transition"
-            >
-              {locations.map((x) => (
-                <option key={x} value={x}>
-                  {x === "all" ? "Location: All" : `Location: ${x}`}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Row 3 */}
-          <div className="mt-3 flex items-center gap-2">
-            <Chip>{counts.total} items</Chip>
-            <Chip tone="red">{counts.lost} lost</Chip>
-            <Chip tone="green">{counts.solved} solved</Chip>
-
-            <div className="flex-1" />
-
-            <button
-              onClick={() =>
-                apiExportCsv({
-                  q: q.trim() || undefined,
-                  status: statusFilter === "all" ? "" : statusFilter,
-                  source: sourceFilter === "all" ? "" : sourceFilter,
-                  label: labelFilter === "all" ? "" : labelFilter,
-                  location: locationFilter === "all" ? "" : locationFilter,
-                })
-              }
-              className="lg:hidden inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-500/15 hover:bg-sky-500/20 ring-1 ring-sky-400/25 text-sky-200 transition"
-            >
-              <Download className="w-4 h-4" />
-              Export CSV
-            </button>
-
-            {err ? (
-              <span className="text-rose-300 text-sm ml-2">{err}</span>
-            ) : null}
           </div>
         </div>
+      </div>
 
-        {/* ✅ CARD GRID: add gap-4 (you forgot gap) */}
-        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filtered.map((it) => {
-            const statusLost = isLost(it);
+      {loading ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <RefreshCw className="mx-auto h-6 w-6 animate-spin text-slate-400" />
+          <p className="mt-3 text-sm text-slate-500">Loading events...</p>
+        </div>
+      ) : error ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 shadow-sm">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 text-red-600" />
+            <div>
+              <h3 className="font-semibold text-red-700">Failed to load events</h3>
+              <p className="mt-1 text-sm text-red-600">{error}</p>
+            </div>
+          </div>
+        </div>
+      ) : filteredItems.length === 0 ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <Clock3 className="mx-auto h-6 w-6 text-slate-400" />
+          <p className="mt-3 text-sm text-slate-500">No events found.</p>
+        </div>
+      ) : (
+        <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+          {filteredItems.map((item, index) => {
+            const imageSrc = item.image_url || item.snapshot_url;
+            const source = sourceBadge(item);
+            const label = getItemLabel(item);
+            const itemKey = String(item.id ?? item.event_id ?? index);
 
             return (
               <div
-                key={it.id}
-                className="rounded-2xl bg-[#0e1627]/70 ring-1 ring-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.35)] overflow-hidden"
+                key={itemKey}
+                className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
               >
-                <div className="flex gap-4 p-5">
-                  {/* thumb */}
-                  <div className="w-44 shrink-0">
-                    {/* ✅ FIX “water bottle half”: use object-contain + background */}
-                    <div className="relative w-44 h-28 rounded-2xl bg-[#07101f] ring-1 ring-white/10 overflow-hidden flex items-center justify-center">
-                      {it.imageUrl ? (
-                        <>
-                          <img
-                            src={it.imageUrl}
-                            className="w-full h-full object-contain"
-                            alt={it.label || "evidence"}
-                            loading="lazy"
-                            decoding="async"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).style.display =
-                                "none";
-                            }}
-                          />
-                          <button
-                            onClick={() => openImage(it)}
-                            className="absolute inset-0 opacity-0 hover:opacity-100 transition bg-black/55 backdrop-blur-sm flex items-center justify-center"
-                            title="View evidence"
-                          >
-                            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/10 ring-1 ring-white/15">
-                              <ImageIcon className="w-4 h-4" />
-                              <span className="text-sm">Open</span>
-                            </div>
-                          </button>
-                        </>
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs gap-2">
-                          <ImageIcon className="w-4 h-4" />
-                          No image
-                        </div>
-                      )}
+                <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-4">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-base font-semibold text-slate-900">
+                      {label}
+                    </h3>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${statusBadgeClass(
+                          item.status
+                        )}`}
+                      >
+                        {String(item.status || "").toLowerCase() === "solved" ? (
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        ) : (
+                          <AlertCircle className="h-3.5 w-3.5" />
+                        )}
+                        {item.status || "Unknown"}
+                      </span>
 
-                      {/* badges */}
-                      <div className="absolute left-2 bottom-2 flex gap-2">
-                        <span
-                          className={
-                            "px-2 py-0.5 rounded-full text-[11px] ring-1 " +
-                            (statusLost
-                              ? "bg-rose-500/20 text-rose-200 ring-rose-400/25"
-                              : "bg-emerald-500/20 text-emerald-200 ring-emerald-400/25")
-                          }
-                        >
-                          {statusLost ? "Lost" : "Solved"}
-                        </span>
-
-                        <span className="px-2 py-0.5 rounded-full text-[11px] ring-1 bg-sky-500/20 text-sky-200 ring-sky-400/25">
-                          {(it.source || "unknown").toUpperCase()}
-                        </span>
-                      </div>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${source.className}`}
+                      >
+                        {source.icon}
+                        {source.label}
+                      </span>
                     </div>
                   </div>
+                </div>
 
-                  {/* right */}
-                  <div className="flex-1 min-w-0">
-                    <div className="text-lg font-semibold leading-tight">
-                      {it.label || "Unknown"}
-                    </div>
-                    <div className="text-sm text-slate-200/90">
-                      {it.location || "Unknown"}
-                    </div>
-                    <div className="text-xs text-slate-400 mt-1 line-clamp-2 break-all">
-                      ID: {it.id}
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                      <div className="rounded-2xl bg-[#0b1220]/70 ring-1 ring-white/10 px-4 py-3">
-                        <div className="text-xs text-slate-400">First Seen</div>
-                        <div className="text-slate-200">
-                          {fmtTs(it.firstSeenTs)}
-                        </div>
+                <div className="grid gap-4 p-4 md:grid-cols-[160px_1fr]">
+                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                    {imageSrc ? (
+                      <img
+                        src={apiUrl(imageSrc)}
+                        alt={label}
+                        className="h-40 w-full cursor-pointer object-cover"
+                        loading="lazy"
+                        onClick={() => setSelectedImage(apiUrl(imageSrc))}
+                        onError={(e) => {
+                          const img = e.currentTarget;
+                          img.style.display = "none";
+                          const parent = img.parentElement;
+                          if (parent) {
+                            parent.innerHTML = `
+                              <div class="flex h-40 items-center justify-center text-slate-400">
+                                Image unavailable
+                              </div>
+                            `;
+                          }
+                        }}
+                      />
+                    ) : (
+                      <div className="flex h-40 flex-col items-center justify-center gap-2 text-slate-400">
+                        <ImageIcon className="h-6 w-6" />
+                        <span className="text-xs">No image</span>
                       </div>
-                      <div className="rounded-2xl bg-[#0b1220]/70 ring-1 ring-white/10 px-4 py-3">
-                        <div className="text-xs text-slate-400">Last Seen</div>
-                        <div className="text-slate-200">
-                          {fmtTs(it.lastSeenTs)}
-                        </div>
-                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 text-sm">
+                    <div className="flex gap-2">
+                      <span className="w-24 shrink-0 text-slate-500">Camera</span>
+                      <span className="font-medium text-slate-800">
+                        {item.camera || item.camera_id || "-"}
+                      </span>
                     </div>
 
-                    <div className="mt-3 rounded-2xl bg-[#0b1220]/70 ring-1 ring-white/10 px-4 py-3">
-                      <div className="text-xs text-slate-400">Notes</div>
-                      <div className="text-sm text-slate-200 mt-0.5 whitespace-pre-wrap break-words">
-                        {it.notes ? (
-                          it.notes
-                        ) : (
-                          <span className="text-slate-500">No notes</span>
-                        )}
-                      </div>
+                    <div className="flex gap-2">
+                      <span className="w-24 shrink-0 text-slate-500">ROI</span>
+                      <span className="font-medium text-slate-800">
+                        {item.roi_name || item.roi_id || "-"}
+                      </span>
                     </div>
 
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <button
-                        onClick={() => openNotes(it)}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-white/5 hover:bg-white/10 ring-1 ring-white/10 text-sm transition"
-                      >
-                        <StickyNote className="w-4 h-4" />
-                        Notes
-                      </button>
+                    <div className="flex gap-2">
+                      <span className="w-24 shrink-0 text-slate-500">Time</span>
+                      <span className="font-medium text-slate-800">
+                        {formatDateTime(getTime(item))}
+                      </span>
+                    </div>
 
-                      <button
-                        onClick={() => onSolve(it)}
-                        disabled={!statusLost}
-                        className={
-                          "inline-flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-medium transition " +
-                          (statusLost
-                            ? "bg-emerald-600/40 hover:bg-emerald-600/55 ring-1 ring-emerald-400/25 text-emerald-100"
-                            : "bg-white/5 ring-1 ring-white/10 text-slate-500 cursor-not-allowed")
-                        }
-                      >
-                        <CheckCircle2 className="w-4 h-4" />
-                        Mark Solved
-                      </button>
+                    <div className="flex gap-2">
+                      <span className="w-24 shrink-0 text-slate-500">
+                        Confidence
+                      </span>
+                      <span className="font-medium text-slate-800">
+                        {typeof item.confidence === "number"
+                          ? `${(item.confidence * 100).toFixed(1)}%`
+                          : "-"}
+                      </span>
+                    </div>
 
-                      <button
-                        onClick={() => onDelete(it)}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-rose-600/30 hover:bg-rose-600/45 ring-1 ring-rose-400/25 text-rose-100 text-sm transition"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        Delete
-                      </button>
+                    <div className="pt-2">
+                      <div className="mb-1 text-slate-500">Notes</div>
+                      <div className="min-h-[52px] rounded-xl bg-slate-50 p-3 text-slate-700">
+                        {item.note || item.notes || "No notes available"}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -662,101 +426,25 @@ export default function LostAndFoundEventsPage() {
             );
           })}
         </div>
+      )}
 
-        {filtered.length === 0 && (
-          <div className="mt-6 rounded-2xl bg-white/5 ring-1 ring-white/10 p-8 text-center text-slate-300">
-            No items found.
-          </div>
-        )}
-      </div>
-
-      {/* ✅ Image modal: big + zoom + not blurry by forcing w-full */}
-      <Modal open={imgOpen} onClose={() => setImgOpen(false)} title={imgTitle}>
-        <div className="rounded-xl bg-black/30 ring-1 ring-white/10 h-[74vh] overflow-auto">
-          {/* zoom controls */}
-          <div className="sticky top-0 z-10 flex items-center justify-between gap-2 p-2 bg-slate-900/55 backdrop-blur border-b border-white/10">
-            <div className="text-xs text-slate-300 truncate">{imgUrl}</div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))}
-                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 ring-1 ring-white/10 text-sm"
-              >
-                −
-              </button>
-              <div className="px-3 py-1.5 rounded-lg bg-white/5 ring-1 ring-white/10 text-sm text-slate-200">
-                {Math.round(zoom * 100)}%
-              </div>
-              <button
-                onClick={() => setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))}
-                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 ring-1 ring-white/10 text-sm"
-              >
-                +
-              </button>
-              <a
-                href={imgUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 ring-1 ring-white/10 text-sm text-slate-200"
-              >
-                Open Original
-              </a>
-            </div>
-          </div>
-
-          {/* image */}
-          <div className="min-h-[calc(74vh-52px)] flex items-center justify-center p-4">
+      {selectedImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div
+            className="max-h-[90vh] max-w-[95vw] overflow-hidden rounded-2xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
             <img
-              src={imgUrl}
-              alt="Evidence"
-              loading="eager"
-              decoding="async"
-              className="object-contain max-w-full max-h-full"
-              style={{
-                transform: `scale(${zoom})`,
-                transformOrigin: "center",
-              }}
+              src={selectedImage}
+              alt="Selected evidence"
+              className="max-h-[90vh] max-w-[95vw] object-contain"
             />
           </div>
         </div>
-      </Modal>
-
-      {/* Notes modal */}
-      <Modal
-        open={notesOpen}
-        onClose={() => {
-          setNotesOpen(false);
-          setNotesItem(null);
-        }}
-        title={`Notes • ${notesItem?.label || ""}`}
-      >
-        <div className="text-sm text-slate-300 mb-2 break-all">
-          Item ID: <span className="text-slate-200">{notesItem?.id || "-"}</span>
-        </div>
-        <textarea
-          value={notesDraft}
-          onChange={(e) => setNotesDraft(e.target.value)}
-          rows={8}
-          className="w-full px-3 py-2 rounded-xl bg-[#0b1220] ring-1 ring-white/10 outline-none text-sm"
-          placeholder="Write notes (e.g., owner contacted, item stored at office...)"
-        />
-        <div className="mt-3 flex items-center justify-end gap-2">
-          <button
-            onClick={() => {
-              setNotesOpen(false);
-              setNotesItem(null);
-            }}
-            className="px-3 py-2 rounded-xl bg-white/8 hover:bg-white/12 ring-1 ring-white/10 text-sm transition"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={saveNotes}
-            className="px-3 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/20 ring-1 ring-sky-500/25 text-sky-200 text-sm transition"
-          >
-            Save Notes
-          </button>
-        </div>
-      </Modal>
+      )}
     </div>
   );
 }
