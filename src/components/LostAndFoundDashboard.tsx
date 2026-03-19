@@ -1,6 +1,7 @@
 import type { Camera, Alert } from "../App";
 import { CameraFeed } from "./CameraFeedLF";
 import { useEffect, useMemo, useState } from "react";
+import { resolveLostFoundUrl } from "../api/base";
 
 interface Props {
   cameras?: Camera[];
@@ -36,7 +37,8 @@ function AlertCard({
 }) {
   const [imgError, setImgError] = useState(false);
 
-  const hasImage = !!alert.imageUrl && !imgError;
+  const resolvedImageUrl = resolveLostFoundUrl(alert.imageUrl);
+  const hasImage = !!resolvedImageUrl && !imgError;
 
   return (
     <div className="border border-slate-800 rounded-2xl p-3 bg-slate-950/40">
@@ -44,11 +46,11 @@ function AlertCard({
         <div className="w-[96px] h-[72px] rounded-xl overflow-hidden border border-slate-800 bg-slate-900 shrink-0 flex items-center justify-center">
           {hasImage ? (
             <img
-              src={alert.imageUrl}
+              src={resolvedImageUrl}
               alt="evidence"
               className="w-full h-full object-cover"
               onError={() => {
-                console.log("❌ Image failed:", alert.imageUrl);
+                console.log("❌ Image failed:", resolvedImageUrl);
                 setImgError(true);
               }}
             />

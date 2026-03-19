@@ -1,9 +1,6 @@
 // src/pages/LiveViewPage.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-
-const API_BASE =
-  (import.meta as any).env?.VITE_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://127.0.0.1:8000";
+import { getApiBase, resolveApiUrl } from "../api/base";
 
 const MAX_ACTIVE_LIVE_STREAMS = 4;
 
@@ -352,8 +349,7 @@ function MjpegStream({
       reportAspect();
     };
 
-    const onError = (e: Event) => {
-      console.log(`[MjpegStream] Error: ${camId} view ${String(viewId ?? "")}`, e);
+    const onError = () => {
       setLoading(false);
 
       setErrCount((prev) => {
@@ -381,7 +377,6 @@ function MjpegStream({
     const aspectTimer = window.setInterval(reportAspect, 800);
 
     return () => {
-      console.log(`[MjpegStream] Cleanup: ${camId} view ${String(viewId ?? "")}`);
       img.removeEventListener("load", onLoad);
       img.removeEventListener("error", onError);
       img.src = "";
@@ -393,8 +388,7 @@ function MjpegStream({
       }
       window.clearInterval(aspectTimer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, detectionEnabled, showOverlays]);
+  }, [url, detectionEnabled, showOverlays, camId, viewId, onAspect]);
 
   return (
     <>
@@ -718,6 +712,8 @@ function CameraCard({
 }
 
 export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
+  const API_BASE = getApiBase(mode);
+
   const [aspectMap, setAspectMap] = useState<Record<string, number>>({});
   const setAspect = (key: string, ratio: number) => {
     if (!isFinite(ratio) || ratio < 0.3 || ratio > 5) return;
@@ -736,7 +732,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
 
   const [fisheyeOverride, setFisheyeOverride] = useState<Record<string, boolean | null>>(() => {
     try {
-      const raw = localStorage.getItem("live_fisheye_override_v1");
+      const raw = localStorage.getItem(`live_fisheye_override_v1_${mode}`);
       if (!raw) return {};
       return JSON.parse(raw);
     } catch {
@@ -747,6 +743,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   const [activeCamIds, setActiveCamIds] = useState<string[]>([]);
 
   const checkCameraStatus = async () => {
+    if (!API_BASE) return;
     try {
       const r = await fetch(`${API_BASE}/api/live/status`, { cache: "no-store" });
       if (r.ok) {
@@ -759,6 +756,8 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   };
 
   const handleRestartCamera = async (camId: string) => {
+    if (!API_BASE) return;
+
     setRestartingCameras((prev) => ({ ...prev, [camId]: true }));
 
     try {
@@ -784,6 +783,8 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   };
 
   useEffect(() => {
+    if (!API_BASE) return;
+
     const loadDetectionConfig = async () => {
       try {
         const r = await fetch(`${API_BASE}/api/live/detection/state`, { cache: "no-store" });
@@ -796,15 +797,17 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
       }
     };
     loadDetectionConfig();
-  }, []);
+  }, [API_BASE]);
 
   useEffect(() => {
     try {
-      localStorage.setItem("live_fisheye_override_v1", JSON.stringify(fisheyeOverride));
+      localStorage.setItem(`live_fisheye_override_v1_${mode}`, JSON.stringify(fisheyeOverride));
     } catch {}
-  }, [fisheyeOverride]);
+  }, [fisheyeOverride, mode]);
 
   const handleToggleDetection = async (camId: string, enabled: boolean) => {
+    if (!API_BASE) return;
+
     setUpdatingDetection((prev) => ({ ...prev, [camId]: true }));
 
     try {
@@ -834,10 +837,16 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
 
   useEffect(() => {
     let alive = true;
+    if (!API_BASE) return;
 
     (async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/lostfound/cameras_for_settings`, { cache: "no-store" });
+        const settingsPath =
+          mode === "lost-found"
+            ? "/api/lostfound/cameras_for_settings"
+            : "/api/attire/cameras_for_settings";
+
+        const r = await fetch(`${API_BASE}${settingsPath}`, { cache: "no-store" });
         if (!r.ok) throw new Error(`cameras_for_settings HTTP ${r.status}`);
         const j = await r.json();
         if (alive) setCamList(Array.isArray(j) ? j : []);
@@ -849,10 +858,11 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [API_BASE, mode]);
 
   useEffect(() => {
     let alive = true;
+    if (!API_BASE) return;
 
     const tickState = async () => {
       try {
@@ -875,9 +885,11 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
       alive = false;
       window.clearInterval(id);
     };
-  }, []);
+  }, [API_BASE]);
 
   useEffect(() => {
+    if (!API_BASE) return;
+
     const tickStatus = async () => {
       await checkCameraStatus();
     };
@@ -886,7 +898,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
     const id = window.setInterval(tickStatus, 5000);
 
     return () => window.clearInterval(id);
-  }, []);
+  }, [API_BASE]);
 
   const isFisheye = (camId: string, meta?: SettingsCamera) => {
     const ov = fisheyeOverride[camId];
@@ -974,9 +986,9 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
       views.find((v) => String(v?.id || "").endsWith(`__0`)) ||
       views.find((v) => v?.order === 0);
 
-    const url0 = v0?.mjpegUrl || meta?.mjpegUrl;
-    const urlA = findView("A")?.mjpegUrl;
-    const urlB = findView("B")?.mjpegUrl;
+    const url0 = resolveApiUrl(mode, v0?.mjpegUrl || meta?.mjpegUrl);
+    const urlA = resolveApiUrl(mode, findView("A")?.mjpegUrl);
+    const urlB = resolveApiUrl(mode, findView("B")?.mjpegUrl);
 
     const encodedId = encodeURIComponent(camId);
 
@@ -997,22 +1009,10 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
     }));
   }, [camsBase, activeLiveSet, fisheyeOverride]);
 
-  const activeFish = useMemo(
-    () => rows.filter((r) => r.isActiveStream && r.fish),
-    [rows]
-  );
-  const activeNormal = useMemo(
-    () => rows.filter((r) => r.isActiveStream && !r.fish),
-    [rows]
-  );
-  const pausedFish = useMemo(
-    () => rows.filter((r) => !r.isActiveStream && r.fish),
-    [rows]
-  );
-  const pausedNormal = useMemo(
-    () => rows.filter((r) => !r.isActiveStream && !r.fish),
-    [rows]
-  );
+  const activeFish = useMemo(() => rows.filter((r) => r.isActiveStream && r.fish), [rows]);
+  const activeNormal = useMemo(() => rows.filter((r) => r.isActiveStream && !r.fish), [rows]);
+  const pausedFish = useMemo(() => rows.filter((r) => !r.isActiveStream && r.fish), [rows]);
+  const pausedNormal = useMemo(() => rows.filter((r) => !r.isActiveStream && !r.fish), [rows]);
 
   const activeRows = [...activeFish, ...activeNormal];
   const pausedRows = [...pausedFish, ...pausedNormal];
@@ -1027,7 +1027,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
             {mode === "lost-found" ? "Lost & Found Live View" : "Attire Compliance Live View"}
           </h1>
           <p className="text-slate-400 text-sm">
-            Live source: <span className="text-slate-300">{API_BASE}</span>
+            Live source: <span className="text-slate-300">{API_BASE || "NOT CONFIGURED"}</span>
           </p>
           <p className="text-slate-500 text-xs mt-1">
             Active cards stay on top. Paused cards move below. Fisheye cards are grouped first.
@@ -1090,9 +1090,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
         <section>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-white font-semibold">Paused Cameras</h2>
-            <div className="text-xs text-slate-400">
-              {pausedRows.length} paused
-            </div>
+            <div className="text-xs text-slate-400">{pausedRows.length} paused</div>
           </div>
 
           {pausedRows.length === 0 ? (

@@ -1,20 +1,9 @@
 import { useEffect, useState } from "react";
 import LostAndFoundLiveView from "./LostAndFoundLiveView";
 import { AttireComplianceLiveView } from "./AttireComplianceLiveView";
-
-const LOSTFOUND_API_BASE =
-  (import.meta as any).env?.VITE_LOSTFOUND_API_BASE?.replace(/\/$/, "") ||
-  "http://127.0.0.1:8000";
-
-const ATTIRE_API_BASE =
-  (import.meta as any).env?.VITE_ATTIRE_API_BASE?.replace(/\/$/, "") ||
-  "http://127.0.0.1:8001";
+import { getApiBase } from "../api/base";
 
 type MonitoringMode = "lost-found" | "attire";
-
-function getApiBase(mode: MonitoringMode) {
-  return mode === "lost-found" ? LOSTFOUND_API_BASE : ATTIRE_API_BASE;
-}
 
 export function LiveViewPageWrapper({
   monitoringMode,
@@ -26,11 +15,9 @@ export function LiveViewPageWrapper({
   useEffect(() => {
     const API_BASE = getApiBase(monitoringMode);
 
-    console.log("[LiveViewPageWrapper] Mounted / mode =", monitoringMode);
-
     const clearStaticCache = async () => {
       try {
-        if (monitoringMode === "lost-found") {
+        if (monitoringMode === "lost-found" && API_BASE) {
           await fetch(`${API_BASE}/api/settings/clear_static_cache`, {
             method: "POST",
             cache: "no-store",
@@ -38,7 +25,6 @@ export function LiveViewPageWrapper({
               "Cache-Control": "no-cache",
             },
           });
-          console.log("[LiveViewPageWrapper] Lost & Found static cache cleared");
         }
       } catch (err) {
         console.warn("[LiveViewPageWrapper] Failed to clear static cache:", err);
@@ -49,8 +35,6 @@ export function LiveViewPageWrapper({
     setMountKey(`live-${monitoringMode}-${Date.now()}`);
 
     return () => {
-      console.log("[LiveViewPageWrapper] Unmounting / mode =", monitoringMode);
-
       const images = document.querySelectorAll("img");
       images.forEach((img) => {
         if (img instanceof HTMLImageElement) {
@@ -81,7 +65,7 @@ export function LiveViewPageWrapper({
           </span>
           <span className="text-slate-600">|</span>
           <span className="text-slate-500">
-            Connected to: {currentApiBase.replace(/^https?:\/\//, "")}
+            Connected to: {currentApiBase ? currentApiBase.replace(/^https?:\/\//, "") : "NOT CONFIGURED"}
           </span>
         </div>
       </div>
