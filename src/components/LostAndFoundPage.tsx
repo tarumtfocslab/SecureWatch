@@ -1,4 +1,3 @@
-// src/pages/LostAndFoundEventsPage.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
@@ -12,15 +11,12 @@ import {
   Filter,
   Clock,
 } from "lucide-react";
-
-const API_BASE =
-  (import.meta as any).env?.VITE_API_BASE_URL?.replace(/\/$/, "") ||
-  "http://127.0.0.1:8000";
+import { LOSTFOUND_API_BASE, buildApiUrl } from "../api/base";
 
 type LostFoundItem = {
   id: string;
   module?: string;
-  source?: string; // live | upload | offline
+  source?: string;
   cameraId?: string;
   videoId?: string;
   location?: string;
@@ -53,26 +49,60 @@ function isSolved(x: LostFoundItem) {
 }
 
 async function apiGetItems(signal?: AbortSignal): Promise<LostFoundItem[]> {
-  const res = await fetch(`${API_BASE}/api/lostfound/items`, { signal });
+  const res = await fetch(
+    buildApiUrl(LOSTFOUND_API_BASE, "/api/lostfound/items"),
+    { signal }
+  );
   if (!res.ok) throw new Error("Failed to load items");
   const js = await res.json();
-  const items: LostFoundItem[] = Array.isArray(js?.items) ? js.items : [];
+  const items: LostFoundItem[] = Array.isArray(js)
+    ? js
+    : Array.isArray(js?.items)
+    ? js.items
+    : [];
 
   return items
-    .filter((it) => it && typeof it === "object" && typeof it.id === "string")
-    .map((it) => ({
+    .filter((it) => it && typeof it === "object" && (it as any).id != null)
+    .map((it: any) => ({
       ...it,
       id: String(it.id),
       label: it.label ? String(it.label) : "Unknown",
       location: it.location ? String(it.location) : "Unknown",
       status: (it.status || "lost") as any,
       source: it.source ? String(it.source) : "unknown",
+      cameraId: it.cameraId ?? it.camera_id ?? undefined,
+      videoId: it.videoId ?? it.video_id ?? undefined,
+      firstSeenTs:
+        typeof it.firstSeenTs === "number"
+          ? it.firstSeenTs
+          : typeof it.first_seen_ts === "number"
+          ? it.first_seen_ts
+          : typeof it.firstSeen === "number"
+          ? it.firstSeen
+          : undefined,
+      lastSeenTs:
+        typeof it.lastSeenTs === "number"
+          ? it.lastSeenTs
+          : typeof it.last_seen_ts === "number"
+          ? it.last_seen_ts
+          : typeof it.lastSeen === "number"
+          ? it.lastSeen
+          : undefined,
+      imageUrl: it.imageUrl
+        ? buildApiUrl(LOSTFOUND_API_BASE, String(it.imageUrl))
+        : it.image_url
+        ? buildApiUrl(LOSTFOUND_API_BASE, String(it.image_url))
+        : null,
+      notes: it.notes ?? "",
     }));
 }
 
 async function apiSolve(itemId: string) {
   const res = await fetch(
-    `${API_BASE}/api/lostfound/item/${encodeURIComponent(itemId)}/solve`,
+    buildApiUrl(
+      LOSTFOUND_API_BASE,
+      `/api/lostfound/item/${encodeURIComponent(itemId)}/solve`
+    ),
     { method: "POST" }
   );
   if (!res.ok) throw new Error("Solve failed");
@@ -81,7 +111,10 @@ async function apiSolve(itemId: string) {
 
 async function apiUpdateNotes(itemId: string, notes: string) {
   const res = await fetch(
-    `${API_BASE}/api/lostfound/item/${encodeURIComponent(itemId)}/update`,
+    buildApiUrl(
+      LOSTFOUND_API_BASE,
+      `/api/lostfound/item/${encodeURIComponent(itemId)}/update`
+    ),
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -94,7 +127,10 @@ async function apiUpdateNotes(itemId: string, notes: string) {
 
 async function apiDelete(itemId: string) {
   const res = await fetch(
-    `${API_BASE}/api/lostfound/item/${encodeURIComponent(itemId)}`,
+    buildApiUrl(
+      LOSTFOUND_API_BASE,
+      `/api/lostfound/item/${encodeURIComponent(itemId)}`
+    ),
     { method: "DELETE" }
   );
   if (!res.ok) throw new Error("Delete failed");
@@ -127,7 +163,10 @@ async function apiExportCsv(params: {
   if (params.location) usp.set("location", params.location);
 
   const res = await fetch(
-    `${API_BASE}/api/lostfound/items/export.csv?${usp.toString()}`
+    buildApiUrl(
+      LOSTFOUND_API_BASE,
+      `/api/lostfound/items/export.csv?${usp.toString()}`
+    )
   );
   if (!res.ok) throw new Error("Export CSV failed");
   const blob = await res.blob();
@@ -170,7 +209,6 @@ function Modal({
         className="absolute inset-0 bg-black/70 backdrop-blur-sm"
         onClick={onClose}
       />
-      {/* ✅ Bigger modal */}
       <div className="relative w-[min(1400px,96vw)] h-[92vh] overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10 shadow-2xl">
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="text-slate-100 font-semibold">{title}</div>
@@ -183,7 +221,6 @@ function Modal({
           </button>
         </div>
 
-        {/* ✅ Use full modal height correctly */}
         <div className="p-4 h-[calc(92vh-56px)] overflow-auto">{children}</div>
       </div>
     </div>
@@ -208,13 +245,11 @@ export default function LostAndFoundEventsPage() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshSec, setRefreshSec] = useState(2);
 
-  // image modal
   const [imgOpen, setImgOpen] = useState(false);
   const [imgUrl, setImgUrl] = useState<string>("");
   const [imgTitle, setImgTitle] = useState<string>("Evidence");
   const [zoom, setZoom] = useState(1);
 
-  // notes modal
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesItem, setNotesItem] = useState<LostFoundItem | null>(null);
   const [notesDraft, setNotesDraft] = useState("");
@@ -241,7 +276,6 @@ export default function LostAndFoundEventsPage() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -249,7 +283,6 @@ export default function LostAndFoundEventsPage() {
     const sec = clamp(Number(refreshSec || 2), 1, 30);
     const t = setInterval(() => load(), sec * 1000);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRefresh, refreshSec]);
 
   const labels = useMemo(() => {
@@ -359,13 +392,11 @@ export default function LostAndFoundEventsPage() {
 
   return (
     <div className="min-h-screen bg-[#0b1220] text-slate-100">
-      {/* ✅ full-width page (no max-w) */}
       <div className="w-full px-6 py-6">
         <div className="text-slate-300 text-sm mb-3">
           View, search, solve, add notes, export CSV.
         </div>
 
-        {/* TOP PANEL */}
         <div className="rounded-2xl bg-[#0e1627]/70 ring-1 ring-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.35)] p-4">
           <div className="flex items-center gap-3">
             <div className="relative flex-1">
@@ -443,7 +474,6 @@ export default function LostAndFoundEventsPage() {
             </div>
           </div>
 
-          {/* Row 2 */}
           <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
             <select
               value={statusFilter}
@@ -491,7 +521,6 @@ export default function LostAndFoundEventsPage() {
             </select>
           </div>
 
-          {/* Row 3 */}
           <div className="mt-3 flex items-center gap-2">
             <Chip>{counts.total} items</Chip>
             <Chip tone="red">{counts.lost} lost</Chip>
@@ -521,7 +550,6 @@ export default function LostAndFoundEventsPage() {
           </div>
         </div>
 
-        {/* ✅ CARD GRID: add gap-4 (you forgot gap) */}
         <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((it) => {
             const statusLost = isLost(it);
@@ -532,9 +560,7 @@ export default function LostAndFoundEventsPage() {
                 className="rounded-2xl bg-[#0e1627]/70 ring-1 ring-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.35)] overflow-hidden"
               >
                 <div className="flex gap-4 p-5">
-                  {/* thumb */}
                   <div className="w-44 shrink-0">
-                    {/* ✅ FIX “water bottle half”: use object-contain + background */}
                     <div className="relative w-44 h-28 rounded-2xl bg-[#07101f] ring-1 ring-white/10 overflow-hidden flex items-center justify-center">
                       {it.imageUrl ? (
                         <>
@@ -567,7 +593,6 @@ export default function LostAndFoundEventsPage() {
                         </div>
                       )}
 
-                      {/* badges */}
                       <div className="absolute left-2 bottom-2 flex gap-2">
                         <span
                           className={
@@ -587,7 +612,6 @@ export default function LostAndFoundEventsPage() {
                     </div>
                   </div>
 
-                  {/* right */}
                   <div className="flex-1 min-w-0">
                     <div className="text-lg font-semibold leading-tight">
                       {it.label || "Unknown"}
@@ -670,10 +694,8 @@ export default function LostAndFoundEventsPage() {
         )}
       </div>
 
-      {/* ✅ Image modal: big + zoom + not blurry by forcing w-full */}
       <Modal open={imgOpen} onClose={() => setImgOpen(false)} title={imgTitle}>
         <div className="rounded-xl bg-black/30 ring-1 ring-white/10 h-[74vh] overflow-auto">
-          {/* zoom controls */}
           <div className="sticky top-0 z-10 flex items-center justify-between gap-2 p-2 bg-slate-900/55 backdrop-blur border-b border-white/10">
             <div className="text-xs text-slate-300 truncate">{imgUrl}</div>
             <div className="flex items-center gap-2 shrink-0">
@@ -703,7 +725,6 @@ export default function LostAndFoundEventsPage() {
             </div>
           </div>
 
-          {/* image */}
           <div className="min-h-[calc(74vh-52px)] flex items-center justify-center p-4">
             <img
               src={imgUrl}
@@ -720,7 +741,6 @@ export default function LostAndFoundEventsPage() {
         </div>
       </Modal>
 
-      {/* Notes modal */}
       <Modal
         open={notesOpen}
         onClose={() => {
