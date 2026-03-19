@@ -316,11 +316,13 @@ function MjpegStream({
 }) {
   const imgRef = useRef<HTMLImageElement>(null);
   const retryTimer = useRef<number | null>(null);
+  const readyPollTimer = useRef<number | null>(null);
   const streamKey = useRef(`${camId}-${String(viewId ?? "")}-${Date.now()}`);
 
   const [loading, setLoading] = useState(true);
   const [errCount, setErrCount] = useState(0);
   const [stopped, setStopped] = useState(false);
+  const [hasFirstFrame, setHasFirstFrame] = useState(false);
 
   const makeUrl = (base: string, bump: number) => {
     const u = new URL(base, window.location.href);
@@ -343,34 +345,65 @@ function MjpegStream({
       window.clearTimeout(retryTimer.current);
       retryTimer.current = null;
     }
+    if (readyPollTimer.current) {
+      window.clearInterval(readyPollTimer.current);
+      readyPollTimer.current = null;
+    }
 
     setLoading(true);
     setErrCount(0);
     setStopped(false);
+    setHasFirstFrame(false);
 
     let lastRatio = 0;
 
-    const reportAspect = () => {
+    const markReadyFromImage = () => {
       const w = img.naturalWidth || 0;
       const h = img.naturalHeight || 0;
+
       if (w > 0 && h > 0) {
+        if (!hasFirstFrame) {
+          setHasFirstFrame(true);
+          setLoading(false);
+          setStopped(false);
+        }
+
         const ratio = w / h;
         if (Math.abs(ratio - lastRatio) > 0.001) {
           lastRatio = ratio;
           onAspect?.(ratio);
         }
+        return true;
       }
+
+      return false;
+    };
+
+    const startReadyPolling = () => {
+      if (readyPollTimer.current) {
+        window.clearInterval(readyPollTimer.current);
+      }
+
+      readyPollTimer.current = window.setInterval(() => {
+        const ok = markReadyFromImage();
+        if (ok && readyPollTimer.current) {
+          window.clearInterval(readyPollTimer.current);
+          readyPollTimer.current = null;
+        }
+      }, 250);
     };
 
     const onLoad = () => {
-      setLoading(false);
-      setErrCount(0);
-      setStopped(false);
-      reportAspect();
+      markReadyFromImage();
     };
 
     const onError = () => {
       setLoading(false);
+
+      if (readyPollTimer.current) {
+        window.clearInterval(readyPollTimer.current);
+        readyPollTimer.current = null;
+      }
 
       setErrCount((prev) => {
         const next = prev + 1;
@@ -385,9 +418,14 @@ function MjpegStream({
         retryTimer.current = window.setTimeout(() => {
           const img2 = imgRef.current;
           if (!img2) return;
+
+          setHasFirstFrame(false);
+          setLoading(true);
+
           img2.src = "";
           img2.src = makeUrl(url, next);
-          setLoading(true);
+
+          startReadyPolling();
         }, delay);
 
         return next;
@@ -400,21 +438,26 @@ function MjpegStream({
     img.src = "";
     img.src = makeUrl(url, 0);
 
-    const aspectTimer = window.setInterval(reportAspect, 1000);
+    startReadyPolling();
 
     return () => {
       img.removeEventListener("load", onLoad);
       img.removeEventListener("error", onError);
-      img.src = "";
-      img.removeAttribute("src");
 
       if (retryTimer.current) {
         window.clearTimeout(retryTimer.current);
         retryTimer.current = null;
       }
-      window.clearInterval(aspectTimer);
+
+      if (readyPollTimer.current) {
+        window.clearInterval(readyPollTimer.current);
+        readyPollTimer.current = null;
+      }
+
+      img.src = "";
+      img.removeAttribute("src");
     };
-  }, [url, detectionEnabled, showOverlays, camId, viewId, onAspect]);
+  }, [url, detectionEnabled, showOverlays, camId, viewId, onAspect, hasFirstFrame]);
 
   return (
     <>
@@ -449,7 +492,7 @@ function MjpegStream({
       <img
         ref={imgRef}
         className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${
-          loading || videoEnded || stopped ? "opacity-0" : "opacity-100"
+          hasFirstFrame && !videoEnded && !stopped ? "opacity-100" : "opacity-0"
         }`}
         alt={`${camId} view ${String(viewId ?? "")}`}
         draggable={false}
