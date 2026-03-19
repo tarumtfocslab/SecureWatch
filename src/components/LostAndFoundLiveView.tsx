@@ -5,6 +5,7 @@ import { getApiBase, resolveApiUrl } from "../api/base";
 const MAX_ACTIVE_LIVE_STREAMS = 4;
 const STATE_POLL_MS = 3000;
 const STATUS_POLL_MS = 6000;
+const OVERRIDE_POLL_MS = 4000;
 const MAX_STREAM_RETRIES = 5;
 
 type LiveDet = Record<string, any>;
@@ -77,6 +78,19 @@ function normalizeCamId(id: string) {
 
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
+}
+
+function shallowEqualOverrides(
+  a: Record<string, ViewModeOverride>,
+  b: Record<string, ViewModeOverride>
+) {
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
 }
 
 function toPctBox(det: LiveDet): { x: number; y: number; w: number; h: number } | null {
@@ -289,7 +303,9 @@ function StreamUnavailableOverlay({ message }: { message: string }) {
     <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
       <div className="text-center px-4">
         <div className="text-slate-200 text-sm">{message}</div>
-        <div className="text-slate-500 text-xs mt-2">Stream retry stopped temporarily</div>
+        <div className="text-slate-500 text-xs mt-2">
+          Stream retry stopped temporarily
+        </div>
       </div>
     </div>
   );
@@ -494,7 +510,9 @@ function MjpegStream({
         </div>
       )}
 
-      {!videoEnded && stopped && <StreamUnavailableOverlay message="Stream unavailable" />}
+      {!videoEnded && stopped && (
+        <StreamUnavailableOverlay message="Stream unavailable" />
+      )}
 
       <img
         ref={imgRef}
@@ -809,26 +827,60 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   const [cameraStatus, setCameraStatus] = useState<Record<string, CameraStatus>>({});
   const [restartingCameras, setRestartingCameras] = useState<Record<string, boolean>>({});
 
-  const [fisheyeOverride, setFisheyeOverride] = useState<Record<string, ViewModeOverride>>(() => {
-    try {
-      const raw = localStorage.getItem(`live_fisheye_override_v2_${mode}`);
-      if (!raw) return {};
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch {
-      return {};
-    }
-  });
-
+  const [fisheyeOverride, setFisheyeOverride] = useState<Record<string, ViewModeOverride>>({});
   const [activeCamIds, setActiveCamIds] = useState<string[]>([]);
+  const savingOverrideRef = useRef(false);
 
-  useEffect(() => {
+  const loadViewModeOverrides = async () => {
+    if (!API_BASE) return;
+
     try {
-      localStorage.setItem(`live_fisheye_override_v2_${mode}`, JSON.stringify(fisheyeOverride));
-    } catch {
-      // ignore
+      const r = await fetch(`${API_BASE}/api/live/view-mode-overrides`, {
+        cache: "no-store",
+      });
+      if (!r.ok) throw new Error(`view-mode-overrides HTTP ${r.status}`);
+
+      const j = await r.json();
+      const next: Record<string, ViewModeOverride> = {};
+
+      if (j && typeof j === "object") {
+        for (const [k, v] of Object.entries(j)) {
+          const key = normalizeCamId(k);
+          const value = String(v).toLowerCase();
+          if (value === "auto" || value === "fisheye" || value === "normal") {
+            next[key] = value as ViewModeOverride;
+          }
+        }
+      }
+
+      setFisheyeOverride((prev) => {
+        if (shallowEqualOverrides(prev, next)) return prev;
+        return next;
+      });
+    } catch (e) {
+      console.warn("Failed to load view mode overrides:", e);
     }
-  }, [fisheyeOverride, mode]);
+  };
+
+  const saveViewModeOverrides = async (nextOverrides: Record<string, ViewModeOverride>) => {
+    if (!API_BASE) return false;
+    try {
+      savingOverrideRef.current = true;
+      const r = await fetch(`${API_BASE}/api/live/view-mode-overrides`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextOverrides),
+      });
+      return r.ok;
+    } catch (e) {
+      console.warn("Failed to save view mode overrides:", e);
+      return false;
+    } finally {
+      window.setTimeout(() => {
+        savingOverrideRef.current = false;
+      }, 500);
+    }
+  };
 
   const checkCameraStatus = async () => {
     if (!API_BASE) return;
@@ -886,6 +938,30 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
     };
 
     loadDetectionConfig();
+  }, [API_BASE]);
+
+  useEffect(() => {
+    if (!API_BASE) return;
+    loadViewModeOverrides();
+  }, [API_BASE]);
+
+  useEffect(() => {
+    if (!API_BASE) return;
+
+    let busy = false;
+
+    const tickOverrides = async () => {
+      if (busy || savingOverrideRef.current) return;
+      busy = true;
+      try {
+        await loadViewModeOverrides();
+      } finally {
+        busy = false;
+      }
+    };
+
+    const id = window.setInterval(tickOverrides, OVERRIDE_POLL_MS);
+    return () => window.clearInterval(id);
   }, [API_BASE]);
 
   const handleToggleDetection = async (camId: string, enabled: boolean) => {
@@ -1064,19 +1140,31 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
     });
   };
 
-  const toggleOverride = (camId: string) => {
+  const toggleOverride = async (camId: string) => {
     const key = normalizeCamId(camId);
 
-    setFisheyeOverride((prev) => {
-      const current = prev[key] || "auto";
+    const current = fisheyeOverride[key] || "auto";
 
-      let nextValue: ViewModeOverride;
-      if (current === "auto") nextValue = "fisheye";
-      else if (current === "fisheye") nextValue = "normal";
-      else nextValue = "auto";
+    let nextValue: ViewModeOverride;
+    if (current === "auto") nextValue = "fisheye";
+    else if (current === "fisheye") nextValue = "normal";
+    else nextValue = "auto";
 
-      return { ...prev, [key]: nextValue };
-    });
+    const nextOverrides: Record<string, ViewModeOverride> = {
+      ...fisheyeOverride,
+      [key]: nextValue,
+    };
+
+    setFisheyeOverride(nextOverrides);
+
+    const ok = await saveViewModeOverrides(nextOverrides);
+    if (!ok) {
+      setFisheyeOverride(fisheyeOverride);
+      alert("Failed to save shared view mode. Please try again.");
+      return;
+    }
+
+    await loadViewModeOverrides();
   };
 
   const getStreamUrls = (camId: string, meta?: SettingsCamera) => {
