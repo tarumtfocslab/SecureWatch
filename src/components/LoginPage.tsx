@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Video, Lock, User, AlertCircle } from "lucide-react";
+import { useState } from 'react';
+import { Video, Lock, User, AlertCircle } from 'lucide-react';
 import { api, setToken } from "../api/apiHelper";
 
 interface LoginPageProps {
@@ -7,16 +7,13 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ onLogin }: LoginPageProps) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (isLoading) return;
-
     setError("");
     setIsLoading(true);
 
@@ -30,16 +27,18 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       onLogin(r.user);
     } catch (err: any) {
       setError(err?.message || "Login failed");
-    } finally {
       setIsLoading(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
+      {/* Background Pattern */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] opacity-20" />
-
+      
+      {/* Login Card */}
       <div className="relative w-full max-w-md">
+        {/* Logo & Branding */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-2xl mb-4">
             <Video className="w-8 h-8 text-white" />
@@ -48,10 +47,12 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           <p className="text-slate-400">CCTV Monitoring System</p>
         </div>
 
+        {/* Login Form */}
         <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-800 rounded-xl p-8">
           <h2 className="text-white text-xl mb-6">Sign In</h2>
-
+          
           <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Error Message */}
             {error && (
               <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-3 flex items-center gap-2">
                 <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
@@ -59,6 +60,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               </div>
             )}
 
+            {/* Username Field */}
             <div>
               <label htmlFor="username" className="block text-slate-300 text-sm mb-2">
                 Username/Email
@@ -74,12 +76,12 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                   onChange={(e) => setUsername(e.target.value)}
                   className="w-full bg-slate-800/50 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                   placeholder="Enter username/email"
-                  autoComplete="username"
                   required
                 />
               </div>
             </div>
 
+            {/* Password Field */}
             <div>
               <label htmlFor="password" className="block text-slate-300 text-sm mb-2">
                 Password
@@ -95,12 +97,12 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-slate-800/50 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                   placeholder="Enter password"
-                  autoComplete="current-password"
                   required
                 />
               </div>
             </div>
 
+            {/* Submit Button */}
             <button
               type="submit"
               disabled={isLoading}
@@ -117,6 +119,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             </button>
           </form>
 
+          {/* Demo Credentials Info */}
           <div className="mt-6 pt-6 border-t border-slate-800">
             <p className="text-slate-500 text-sm text-center mb-2">Demo Credentials:</p>
             <div className="bg-slate-800/30 rounded-lg p-3 text-sm">
@@ -132,6 +135,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           </div>
         </div>
 
+        {/* Footer */}
         <div className="text-center mt-6">
           <p className="text-slate-500 text-sm">
             &copy; 2024 SecureWatch. All rights reserved.
@@ -141,5 +145,3 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     </div>
   );
 }
-
-export default LoginPage;
