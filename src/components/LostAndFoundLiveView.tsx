@@ -69,6 +69,8 @@ type CamRow = {
   isActiveStream: boolean;
 };
 
+type ViewModeOverride = "auto" | "fisheye" | "normal";
+
 function normalizeCamId(id: string) {
   return (id || "").replace(/_h264$/i, "");
 }
@@ -287,9 +289,7 @@ function StreamUnavailableOverlay({ message }: { message: string }) {
     <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-20">
       <div className="text-center px-4">
         <div className="text-slate-200 text-sm">{message}</div>
-        <div className="text-slate-500 text-xs mt-2">
-          Stream retry stopped temporarily
-        </div>
+        <div className="text-slate-500 text-xs mt-2">Stream retry stopped temporarily</div>
       </div>
     </div>
   );
@@ -494,9 +494,7 @@ function MjpegStream({
         </div>
       )}
 
-      {!videoEnded && stopped && (
-        <StreamUnavailableOverlay message="Stream unavailable" />
-      )}
+      {!videoEnded && stopped && <StreamUnavailableOverlay message="Stream unavailable" />}
 
       <img
         ref={imgRef}
@@ -526,7 +524,7 @@ function CameraCard({
   handleRestartCamera,
 }: {
   row: CamRow;
-  fisheyeOverride: Record<string, boolean | null>;
+  fisheyeOverride: Record<string, ViewModeOverride>;
   updatingDetection: Record<string, boolean>;
   detectionConfig: DetectionConfig;
   cameraStatus: Record<string, CameraStatus>;
@@ -557,21 +555,21 @@ function CameraCard({
 
   const streamUrls_ = getStreamUrls(camId, meta);
 
-  const overrideState = fisheyeOverride[camId];
+  const overrideState = fisheyeOverride[normalizeCamId(camId)] || "auto";
   const vt = String(meta?.videoType || "").toLowerCase();
 
   const badgeText =
-    overrideState == null
-      ? fish
-        ? vt
-          ? `FISHEYE (${vt})`
-          : "FISHEYE"
-        : vt
-        ? `NORMAL (${vt})`
-        : "NORMAL"
-      : fish
+    overrideState === "fisheye"
       ? "FISHEYE (forced)"
-      : "NORMAL (forced)";
+      : overrideState === "normal"
+      ? "NORMAL (forced)"
+      : fish
+      ? vt
+        ? `FISHEYE (${vt})`
+        : "FISHEYE"
+      : vt
+      ? `NORMAL (${vt})`
+      : "NORMAL";
 
   const key0 = `${camId}:v0`;
   const ratio0 = aspectMap[key0] || 1.3333333;
@@ -811,17 +809,26 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   const [cameraStatus, setCameraStatus] = useState<Record<string, CameraStatus>>({});
   const [restartingCameras, setRestartingCameras] = useState<Record<string, boolean>>({});
 
-  const [fisheyeOverride, setFisheyeOverride] = useState<Record<string, boolean | null>>(() => {
+  const [fisheyeOverride, setFisheyeOverride] = useState<Record<string, ViewModeOverride>>(() => {
     try {
-      const raw = localStorage.getItem(`live_fisheye_override_v1_${mode}`);
+      const raw = localStorage.getItem(`live_fisheye_override_v2_${mode}`);
       if (!raw) return {};
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
     } catch {
       return {};
     }
   });
 
   const [activeCamIds, setActiveCamIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`live_fisheye_override_v2_${mode}`, JSON.stringify(fisheyeOverride));
+    } catch {
+      // ignore
+    }
+  }, [fisheyeOverride, mode]);
 
   const checkCameraStatus = async () => {
     if (!API_BASE) return;
@@ -880,14 +887,6 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
 
     loadDetectionConfig();
   }, [API_BASE]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(`live_fisheye_override_v1_${mode}`, JSON.stringify(fisheyeOverride));
-    } catch {
-      // ignore
-    }
-  }, [fisheyeOverride, mode]);
 
   const handleToggleDetection = async (camId: string, enabled: boolean) => {
     if (!API_BASE) return;
@@ -1000,9 +999,11 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   }, [API_BASE]);
 
   const isFisheye = (camId: string, meta?: SettingsCamera) => {
-    const ov = fisheyeOverride[camId];
-    if (ov === true) return true;
-    if (ov === false) return false;
+    const key = normalizeCamId(camId);
+    const ov = fisheyeOverride[key] || "auto";
+
+    if (ov === "fisheye") return true;
+    if (ov === "normal") return false;
 
     if (meta?.isFisheye === true) return true;
     if (meta?.isFisheye === false) return false;
@@ -1064,13 +1065,17 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   };
 
   const toggleOverride = (camId: string) => {
-    setFisheyeOverride((m) => {
-      const current = m[camId];
-      if (current == null) return { ...m, [camId]: true };
-      if (current === true) return { ...m, [camId]: false };
-      const next = { ...m };
-      delete next[camId];
-      return next;
+    const key = normalizeCamId(camId);
+
+    setFisheyeOverride((prev) => {
+      const current = prev[key] || "auto";
+
+      let nextValue: ViewModeOverride;
+      if (current === "auto") nextValue = "fisheye";
+      else if (current === "fisheye") nextValue = "normal";
+      else nextValue = "auto";
+
+      return { ...prev, [key]: nextValue };
     });
   };
 
