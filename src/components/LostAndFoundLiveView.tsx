@@ -840,10 +840,13 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   const [restartingCameras, setRestartingCameras] = useState<Record<string, boolean>>({});
 
   const [fisheyeOverride, setFisheyeOverride] = useState<Record<string, ViewModeOverride>>({});
-  const [activeCamIds, setActiveCamIds] = useState<string[]>(() => readStoredActiveCamIds(mode));
+  const [activeCamIds, setActiveCamIds] = useState<string[]>([]);
+  const [activeRestoreDone, setActiveRestoreDone] = useState(false);
   const savingOverrideRef = useRef(false);
 
   useEffect(() => {
+    if (!activeRestoreDone) return;
+
     try {
       localStorage.setItem(
         `live_active_cam_ids_v1_${mode}`,
@@ -852,8 +855,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
     } catch {
       // ignore
     }
-  }, [activeCamIds, mode]);
-
+  }, [activeCamIds, mode, activeRestoreDone]);
   const loadViewModeOverrides = async () => {
     if (!API_BASE) return;
 
@@ -1135,8 +1137,18 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
   }, [camList, state]);
 
   useEffect(() => {
+    if (!activeRestoreDone) return;
+    if (!camsBase.length) return;
+
     setActiveCamIds((prev) => {
-      const validLiveIds = camsBase.filter(({ cam }) => !!cam).map(({ camId }) => normalizeCamId(camId));
+      const validLiveIds = camsBase
+        .filter(({ cam }) => !!cam)
+        .map(({ camId }) => normalizeCamId(camId));
+
+      if (!validLiveIds.length) {
+        return prev;
+      }
+
       const filteredPrev = prev
         .map((id) => normalizeCamId(id))
         .filter((id) => validLiveIds.includes(id));
@@ -1147,7 +1159,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
 
       return validLiveIds.slice(0, MAX_ACTIVE_LIVE_STREAMS);
     });
-  }, [camsBase]);
+  }, [camsBase, activeRestoreDone]);
 
   const activeLiveSet = useMemo(
     () => new Set(activeCamIds.map((id) => normalizeCamId(id))),
