@@ -300,28 +300,56 @@ const [lostFoundOfflineStem, setLostFoundOfflineStem] = useState<string | null>(
     if (!token) return;
 
     const base = ATTIRE_API_BASE;
+    const sseUrl = `${base}/api/attire/notifications/stream?token=${encodeURIComponent(token)}`;
 
-    const es = new EventSource(
-      `${base}/api/attire/notifications/stream?token=${encodeURIComponent(token)}`
-    );
+    console.log("[NOTIF] opening SSE:", sseUrl);
+
+    const es = new EventSource(sseUrl);
+
+    es.onopen = () => {
+      console.log("[NOTIF] SSE opened");
+    };
+
+    es.onerror = (err) => {
+      console.error("[NOTIF] SSE error:", err);
+    };
+
+    es.addEventListener("ping", () => {
+      console.log("[NOTIF] ping received");
+    });
 
     es.addEventListener("config", (ev: any) => {
+      console.log("[NOTIF] config raw:", ev.data);
       try {
-        setNotifConfig(JSON.parse(ev.data));
-      } catch {}
+        const parsed = JSON.parse(ev.data);
+        console.log("[NOTIF] config parsed:", parsed);
+        setNotifConfig(parsed);
+      } catch (e) {
+        console.error("[NOTIF] config parse failed:", e);
+      }
     });
 
     es.addEventListener("notify", (ev: any) => {
+      console.log("[NOTIF] notify raw:", ev.data);
+
       try {
         const cfg = notifConfigRef.current;
-        if (cfg && cfg.enabled === false) return;
+        console.log("[NOTIF] current cfg:", cfg);
+
+        if (cfg && cfg.enabled === false) {
+          console.log("[NOTIF] notification ignored because cfg.enabled = false");
+          return;
+        }
 
         const n = JSON.parse(ev.data);
+        console.log("[NOTIF] notify parsed:", n);
 
         const title = `Attire Violation: ${String(n.violation_type || "").toUpperCase()}`;
         const msg = `${n.source_name || n.source_id || "Unknown source"} • ${new Date().toLocaleTimeString()}`;
 
         const toastId = n.id || `${Date.now()}-${Math.random()}`;
+
+        console.log("[NOTIF] creating toast:", { toastId, title, msg });
 
         setAttireToasts((prev) =>
           [
@@ -338,23 +366,36 @@ const [lostFoundOfflineStem, setLostFoundOfflineStem] = useState<string | null>(
         setUnreadAttireNotifs((x) => x + 1);
 
         const durationMs = Math.max(1, Number(cfg?.toast_sec ?? 6)) * 1000;
+        console.log("[NOTIF] toast duration ms:", durationMs);
+
         window.setTimeout(() => {
+          console.log("[NOTIF] removing toast:", toastId);
           setAttireToasts((prev) => prev.filter((x) => x.id !== toastId));
         }, durationMs);
 
         if (cfg?.play_sound) {
+          console.log("[NOTIF] attempting sound playback");
           const a = notifyAudioRef.current;
           if (a) {
             try {
               a.currentTime = 0;
-              a.play().catch(() => {});
-            } catch {}
+              a.play().catch((e) => {
+                console.warn("[NOTIF] sound play blocked:", e);
+              });
+            } catch (e) {
+              console.warn("[NOTIF] sound play error:", e);
+            }
           }
         }
-      } catch {}
+      } catch (e) {
+        console.error("[NOTIF] notify parse/handle failed:", e);
+      }
     });
 
-    return () => es.close();
+    return () => {
+      console.log("[NOTIF] closing SSE");
+      es.close();
+    };
   }, [isAuthenticated]);
 
   useEffect(() => {

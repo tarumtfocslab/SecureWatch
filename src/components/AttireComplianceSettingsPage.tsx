@@ -921,7 +921,7 @@ export function AttireComplianceSettingsPage() {
 
       // notify App.tsx to refresh config (no reload)
       localStorage.setItem("attire:notifCfgVer", String(Date.now()));
-      window.dispatchEvent(new Event("storage"));
+      window.dispatchEvent(new Event("attire:notifChanged"));
 
       alert("Notification settings saved!");
     } catch (e: any) {
