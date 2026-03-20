@@ -302,85 +302,107 @@ export default function App() {
     const base = ATTIRE_API_BASE;
     const sseUrl = `${base}/api/attire/notifications/stream?token=${encodeURIComponent(token)}`;
 
-    console.log("[NOTIF] opening SSE:", sseUrl);
+    let es: EventSource | null = null;
+    let retryTimer: number | null = null;
+    let closed = false;
 
-    const es = new EventSource(sseUrl);
+    const connect = () => {
+      if (closed) return;
 
-    es.onopen = () => {
-      console.log("[NOTIF] SSE opened");
-    };
+      console.log("[NOTIF] opening SSE:", sseUrl);
+      es = new EventSource(sseUrl);
 
-    es.onerror = (err) => {
-      console.error("[NOTIF] SSE error:", err);
-    };
+      es.onopen = () => {
+        console.log("[NOTIF] SSE opened");
+      };
 
-    es.addEventListener("config", (ev: any) => {
-      console.log("[NOTIF] config raw:", ev.data);
-      try {
-        const parsed = JSON.parse(ev.data);
-        console.log("[NOTIF] config parsed:", parsed);
-        setNotifConfig(parsed);
-      } catch (e) {
-        console.error("[NOTIF] config parse failed:", e);
-      }
-    });
+      es.onerror = (err) => {
+        console.error("[NOTIF] SSE error:", err);
 
-    es.onmessage = (ev: MessageEvent) => {
-      console.log("[NOTIF] onmessage raw:", ev.data);
+        try {
+          es?.close();
+        } catch {}
 
-      try {
-        const cfg = notifConfigRef.current;
-        console.log("[NOTIF] current cfg:", cfg);
-
-        if (cfg && cfg.enabled === false) {
-          console.log("[NOTIF] notification ignored because cfg.enabled = false");
-          return;
+        if (!closed) {
+          retryTimer = window.setTimeout(() => {
+            connect();
+          }, 3000);
         }
+      };
 
-        const n = JSON.parse(ev.data);
-        console.log("[NOTIF] onmessage parsed:", n);
+      es.addEventListener("config", (ev: any) => {
+        console.log("[NOTIF] config raw:", ev.data);
+        try {
+          const parsed = JSON.parse(ev.data);
+          console.log("[NOTIF] config parsed:", parsed);
+          setNotifConfig(parsed);
+        } catch (e) {
+          console.error("[NOTIF] config parse failed:", e);
+        }
+      });
 
-        const title = `Attire Violation: ${String(n.violation_type || "").toUpperCase()}`;
-        const msg = `${n.source_name || n.source_id || "Unknown source"} • ${new Date().toLocaleTimeString()}`;
+      es.onmessage = (ev: MessageEvent) => {
+        console.log("[NOTIF] onmessage raw:", ev.data);
 
-        const toastId = n.id || `${Date.now()}-${Math.random()}`;
+        try {
+          const cfg = notifConfigRef.current;
+          console.log("[NOTIF] current cfg:", cfg);
 
-        setAttireToasts((prev) =>
-          [
-            {
-              id: toastId,
-              title,
-              message: msg,
-              createdAt: Date.now(),
-            },
-            ...prev,
-          ].slice(0, 5)
-        );
-
-        setUnreadAttireNotifs((x) => x + 1);
-
-        const durationMs = Math.max(1, Number(cfg?.toast_sec ?? 6)) * 1000;
-        window.setTimeout(() => {
-          setAttireToasts((prev) => prev.filter((x) => x.id !== toastId));
-        }, durationMs);
-
-        if (cfg?.play_sound) {
-          const a = notifyAudioRef.current;
-          if (a) {
-            try {
-              a.currentTime = 0;
-              a.play().catch(() => {});
-            } catch {}
+          if (cfg && cfg.enabled === false) {
+            console.log("[NOTIF] notification ignored because cfg.enabled = false");
+            return;
           }
+
+          const n = JSON.parse(ev.data);
+          console.log("[NOTIF] onmessage parsed:", n);
+
+          const title = `Attire Violation: ${String(n.violation_type || "").toUpperCase()}`;
+          const msg = `${n.source_name || n.source_id || "Unknown source"} • ${new Date().toLocaleTimeString()}`;
+
+          const toastId = n.id || `${Date.now()}-${Math.random()}`;
+
+          setAttireToasts((prev) =>
+            [
+              {
+                id: toastId,
+                title,
+                message: msg,
+                createdAt: Date.now(),
+              },
+              ...prev,
+            ].slice(0, 5)
+          );
+
+          setUnreadAttireNotifs((x) => x + 1);
+
+          const durationMs = Math.max(1, Number(cfg?.toast_sec ?? 6)) * 1000;
+          window.setTimeout(() => {
+            setAttireToasts((prev) => prev.filter((x) => x.id !== toastId));
+          }, durationMs);
+
+          if (cfg?.play_sound) {
+            const a = notifyAudioRef.current;
+            if (a) {
+              try {
+                a.currentTime = 0;
+                a.play().catch(() => {});
+              } catch {}
+            }
+          }
+        } catch (e) {
+          console.error("[NOTIF] onmessage parse failed:", e);
         }
-      } catch (e) {
-        console.error("[NOTIF] onmessage parse failed:", e);
-      }
+      };
     };
+
+    connect();
 
     return () => {
-      console.log("[NOTIF] closing SSE");
-      es.close();
+      closed = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      try {
+        es?.close();
+      } catch {}
     };
   }, [isAuthenticated]);
 
