@@ -14,6 +14,7 @@ import {
   Circle,
   X,
   Video,
+  Trash2,
 } from 'lucide-react';
 import { ATTIRE_API_BASE } from "../api/base";
 
@@ -106,6 +107,36 @@ type UnifiedSource = {
   size?: string;
 };
 
+type AttireRetentionConfig = {
+  retention_days: number;
+};
+
+async function fetchRetentionConfig(): Promise<AttireRetentionConfig> {
+  const res = await fetch(`${API_BASE}/api/attire/data-retention`);
+  if (!res.ok) throw new Error("Failed to load data retention config");
+  return await res.json();
+}
+
+async function saveRetentionConfig(retention_days: number) {
+  const res = await fetch(`${API_BASE}/api/attire/data-retention`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ retention_days }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+  return data;
+}
+
+async function clearAllAttireEventsApi() {
+  const res = await fetch(`${API_BASE}/api/attire/data-retention/events`, {
+    method: "DELETE",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+  return data;
+}
+
 async function fetchNotifConfig(): Promise<AttireNotifConfig> {
   const token = getToken();
   const res = await fetch(`${API_BASE}/api/attire/notifications`, {
@@ -161,7 +192,7 @@ async function fetchOfflineSources(): Promise<UnifiedSource[]> {
 
 export function AttireComplianceSettingsPage() {
   const [activeTab, setActiveTab] = useState<
-    "sources" | "roi" | "timing" | "violations" | "notifications"
+    "sources" | "roi" | "timing" | "violations" | "notifications" | "retention"
   >("sources");
   const [roiMode, setRoiMode] = useState<"roi" | "dewarp">("roi");
 
@@ -656,6 +687,26 @@ export function AttireComplianceSettingsPage() {
     play_sound: false,
   });
 
+  const [retentionDays, setRetentionDays] = useState<number>(7);
+  const [retentionSaving, setRetentionSaving] = useState(false);
+  const [clearingEvents, setClearingEvents] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const cfg = await fetchRetentionConfig();
+        if (!alive) return;
+        setRetentionDays(Number(cfg?.retention_days ?? 7));
+      } catch {
+        // keep default
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -703,7 +754,7 @@ export function AttireComplianceSettingsPage() {
       }
 
       setCurrentPoly([]);
-      // ❗don’t force "normal" here because mode might be mosaic
+      // don’t force "normal" here because mode might be mosaic
       // activeView will be set by the meta effect
     })();
   }, [selectedCamera]);
@@ -803,16 +854,16 @@ export function AttireComplianceSettingsPage() {
       }
       ctx.closePath();
 
-      // ✅ fill ROI region with half opacity
+      // fill ROI region with half opacity
       ctx.fillStyle = "rgba(249, 115, 22, 0.35)";
       ctx.fill();
 
-      // ✅ keep orange outline
+      // keep orange outline
       ctx.lineWidth = 3;
       ctx.strokeStyle = "#f97316";
       ctx.stroke();
 
-      // ✅ keep vertex points
+      // keep vertex points
       for (const [xp, yp] of poly) {
         const x = tile.x0 + (xp / 100) * tile.tw;
         const y = tile.y0 + (yp / 100) * tile.th;
@@ -978,6 +1029,52 @@ export function AttireComplianceSettingsPage() {
       }
     } catch (e: any) {
       alert(`Save Timing failed: ${e?.message || e}`);
+    }
+  };
+
+  const handleSaveRetentionSettings = async () => {
+    setRetentionSaving(true);
+    try {
+      const data = await saveRetentionConfig(retentionDays);
+
+      // let other pages know data changed
+      localStorage.setItem("attire:retentionVer", String(Date.now()));
+      localStorage.setItem("attire:eventsVer", String(Date.now()));
+      window.dispatchEvent(new Event("attire:retentionChanged"));
+      window.dispatchEvent(new Event("attire:eventsChanged"));
+
+      alert(
+        data?.pruned_events > 0
+          ? `Retention saved. ${data.pruned_events} old event(s) were removed.`
+          : "Data retention settings saved."
+      );
+    } catch (e: any) {
+      alert(`Save data retention failed: ${e?.message || e}`);
+    } finally {
+      setRetentionSaving(false);
+    }
+  };
+
+  const handleClearAllEvents = async () => {
+    const ok = window.confirm(
+      "Clear ALL attire events and evidence images?\n\nThis will permanently remove all event records, violation history, dashboard/report data, and saved evidence snapshots."
+    );
+    if (!ok) return;
+
+    setClearingEvents(true);
+    try {
+      const data = await clearAllAttireEventsApi();
+
+      localStorage.setItem("attire:eventsVer", String(Date.now()));
+      localStorage.setItem("attire:dashboardVer", String(Date.now()));
+      window.dispatchEvent(new Event("attire:eventsChanged"));
+      window.dispatchEvent(new Event("attire:dashboardChanged"));
+
+      alert(`All attire events cleared successfully. Removed ${data?.cleared_events ?? 0} event(s).`);
+    } catch (e: any) {
+      alert(`Clear all events failed: ${e?.message || e}`);
+    } finally {
+      setClearingEvents(false);
     }
   };
 
@@ -1291,6 +1388,7 @@ export function AttireComplianceSettingsPage() {
             { id: 'timing', label: 'Timing Control', icon: Clock },
             { id: 'violations', label: 'Violation Types', icon: Square },
             { id: 'notifications', label: 'Notifications', icon: Bell },
+            { id: 'retention', label: 'Data Retention', icon: Trash2 },
           ].map(tab => {
             const Icon = tab.icon;
             return (
@@ -2196,6 +2294,89 @@ export function AttireComplianceSettingsPage() {
                   <Save className="w-4 h-4" />
                   Save Notification Settings
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* Data Retention Tab */}
+          {activeTab === "retention" && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-white mb-1">Data Retention Settings</h3>
+                <p className="text-slate-400 text-sm">
+                  Control how long attire violation events are kept in the system
+                </p>
+              </div>
+
+              <div className="max-w-3xl space-y-6">
+                {/* Retention days */}
+                <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-white text-sm font-medium">Violation Event Retention</div>
+                      <div className="text-slate-400 text-xs">
+                        Event records, dashboard/report history, and evidence images older than this period will be removed automatically
+                      </div>
+                    </div>
+                    <div className="text-slate-200 text-sm font-medium">
+                      {retentionDays} day{retentionDays > 1 ? "s" : ""}
+                    </div>
+                  </div>
+
+                  <input
+                    type="range"
+                    min={1}
+                    max={7}
+                    step={1}
+                    value={retentionDays}
+                    onChange={(e) => setRetentionDays(Number(e.target.value))}
+                    className="w-full"
+                    disabled={retentionSaving || clearingEvents}
+                  />
+
+                  <div className="flex justify-between text-slate-500 text-xs">
+                    <span>1 day</span>
+                    <span>7 days</span>
+                  </div>
+                </div>
+
+                {/* Warning */}
+                <div className="bg-yellow-900/20 border border-yellow-800 rounded-lg p-4">
+                  <p className="text-yellow-300 text-sm">
+                    ⚠️ Data retention is applied across the attire module, including Events, Dashboard, Reports, CSV/PDF export, and evidence snapshots.
+                  </p>
+                </div>
+
+                {/* Clear all */}
+                <div className="bg-red-900/20 border border-red-800 rounded-lg p-4 space-y-3">
+                  <div>
+                    <div className="text-white text-sm font-medium">Clear All Events</div>
+                    <div className="text-slate-400 text-xs mt-1">
+                      Permanently delete all attire violation records and their saved evidence images from the system
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleClearAllEvents}
+                    disabled={clearingEvents || retentionSaving}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    {clearingEvents ? "Clearing..." : "Clear All Events"}
+                  </button>
+                </div>
+
+                {/* Save button */}
+                <div className="pt-2">
+                  <button
+                    onClick={handleSaveRetentionSettings}
+                    disabled={retentionSaving || clearingEvents}
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+                  >
+                    <Save className="w-4 h-4" />
+                    {retentionSaving ? "Saving..." : "Save Data Retention Settings"}
+                  </button>
+                </div>
               </div>
             </div>
           )}
