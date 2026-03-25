@@ -2,6 +2,7 @@ import type { Camera, Alert } from "../App";
 import { CameraFeed } from "./CameraFeedLF";
 import { useEffect, useMemo, useState } from "react";
 import { resolveLostFoundUrl } from "../api/base";
+import { Search, Filter, Maximize2, X } from "lucide-react";
 
 interface Props {
   cameras?: Camera[];
@@ -12,8 +13,8 @@ interface Props {
   onStatusChange: (id: string, status: Camera["status"]) => void;
   onDismissAlert?: (id: string) => void;
   onOpenEvents?: (alert: Alert) => void;
-  viewMode: "grid" | "single";
   isFullscreen: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 function sevDot(sev: Alert["severity"]) {
@@ -24,6 +25,23 @@ function sevDot(sev: Alert["severity"]) {
 
 function makeAlertUiKey(alert: Alert, idx: number) {
   return `${alert.id}_${alert.cameraId}_${alert.timestamp.getTime()}_${idx}`;
+}
+
+function getCameraType(cam: Camera) {
+  const c = cam as Camera & {
+    video_type?: string;
+    type?: string;
+    camera_type?: string;
+    source_type?: string;
+  };
+
+  return (
+    c.video_type ||
+    c.type ||
+    c.camera_type ||
+    c.source_type ||
+    "normal"
+  ).toLowerCase();
 }
 
 function AlertCard({
@@ -50,7 +68,6 @@ function AlertCard({
               alt="evidence"
               className="w-full h-full object-cover"
               onError={() => {
-                console.log("❌ Image failed:", resolvedImageUrl);
                 setImgError(true);
               }}
             />
@@ -134,7 +151,7 @@ function AlertsPanel({
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(dismissedKeys));
     } catch {
-      // ignore storage errors
+      // ignore
     }
   }, [dismissedKeys]);
 
@@ -208,22 +225,142 @@ export function LostFoundDashboard({
   onStatusChange,
   onDismissAlert,
   onOpenEvents,
-  viewMode,
   isFullscreen,
+  onToggleFullscreen,
 }: Props) {
-  const tiles = cameras;
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "online" | "offline" | "warning"
+  >("all");
+  const [typeFilter, setTypeFilter] = useState<
+    "all" | "normal" | "fisheye"
+  >("all");
 
-  const activeId = selectedCamera ?? (tiles[0]?.id ?? null);
-  const main = activeId ? tiles.find((c) => c.id === activeId) : tiles[0];
-  const other = main ? tiles.filter((c) => c.id !== main.id) : tiles;
+  const filteredCameras = useMemo(() => {
+    return cameras.filter((cam) => {
+      const name = (cam.name || "").toLowerCase();
+      const location = (cam.location || "").toLowerCase();
+      const id = (cam.id || "").toLowerCase();
+      const keyword = searchTerm.trim().toLowerCase();
+
+      const matchesSearch =
+        keyword === "" ||
+        name.includes(keyword) ||
+        location.includes(keyword) ||
+        id.includes(keyword);
+
+      const matchesStatus =
+        statusFilter === "all" ? true : cam.status === statusFilter;
+
+      const camType = getCameraType(cam);
+      const matchesType =
+        typeFilter === "all"
+          ? true
+          : typeFilter === "fisheye"
+          ? camType.includes("fisheye")
+          : !camType.includes("fisheye");
+
+      return matchesSearch && matchesStatus && matchesType;
+    });
+  }, [cameras, searchTerm, statusFilter, typeFilter]);
 
   return (
     <>
       {!isFullscreen && (
         <div className="mt-4 bg-slate-900/40 border border-slate-800 rounded-2xl p-4">
-          <div className="text-white">Lost &amp; Found Monitoring</div>
-          <div className="text-slate-400 text-sm mt-1">
-            Fisheye swaps between Group A and Group B every 30s.
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3">
+              <div>
+                <div className="text-white">Lost &amp; Found Monitoring</div>
+                <div className="text-slate-400 text-sm mt-1">
+                  Fisheye swaps between Group A and Group B every 30s.
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Search cameras..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-[260px] pl-10 pr-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white placeholder:text-slate-400 outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowFilters((v) => !v)}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white hover:bg-slate-700"
+                >
+                  <Filter className="w-4 h-4" />
+                  Filters
+                </button>
+
+                {onToggleFullscreen && (
+                  <button
+                    type="button"
+                    onClick={onToggleFullscreen}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white hover:bg-slate-700"
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                    Fullscreen
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {showFilters && (
+              <div className="flex flex-wrap items-center gap-3 border border-slate-800 rounded-2xl bg-slate-950/40 p-4">
+                <select
+                  value={statusFilter}
+                  onChange={(e) =>
+                    setStatusFilter(
+                      e.target.value as "all" | "online" | "offline" | "warning"
+                    )
+                  }
+                  className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white outline-none"
+                >
+                  <option value="all">All Status</option>
+                  <option value="online">Online</option>
+                  <option value="warning">Warning</option>
+                  <option value="offline">Offline</option>
+                </select>
+
+                <select
+                  value={typeFilter}
+                  onChange={(e) =>
+                    setTypeFilter(
+                      e.target.value as "all" | "normal" | "fisheye"
+                    )
+                  }
+                  className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white outline-none"
+                >
+                  <option value="all">All Types</option>
+                  <option value="normal">Normal</option>
+                  <option value="fisheye">Fisheye</option>
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm("");
+                    setStatusFilter("all");
+                    setTypeFilter("all");
+                  }}
+                  className="px-4 py-2 rounded-xl bg-slate-700 text-white hover:bg-slate-600"
+                >
+                  Reset
+                </button>
+
+                <div className="ml-auto text-sm text-slate-400">
+                  {filteredCameras.length} camera
+                  {filteredCameras.length === 1 ? "" : "s"} found
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -231,7 +368,7 @@ export function LostFoundDashboard({
       <div className="mt-6">
         <div className="grid grid-cols-[1fr,380px] gap-4">
           <div className="grid gap-4 grid-cols-3 auto-rows-[260px]">
-            {tiles.map((cam) => (
+            {filteredCameras.map((cam) => (
               <CameraFeed
                 key={cam.id}
                 camera={cam}
@@ -240,14 +377,14 @@ export function LostFoundDashboard({
                 onRecordingToggle={() => onRecordingToggle(cam.id)}
                 onStatusChange={onStatusChange}
                 isFullscreen={isFullscreen}
-                gridContain={viewMode === "grid" && !isFullscreen}
+                gridContain={!isFullscreen}
                 cycleSeconds={30}
               />
             ))}
 
-            {tiles.length === 0 && (
-              <div className="text-slate-400 text-center py-12 col-span-3">
-                No cameras available
+            {filteredCameras.length === 0 && (
+              <div className="text-slate-400 text-center py-12 col-span-3 border border-slate-800 rounded-2xl bg-slate-900/30">
+                No cameras match the current filter.
               </div>
             )}
           </div>

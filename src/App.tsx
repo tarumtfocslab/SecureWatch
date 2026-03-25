@@ -677,7 +677,6 @@ export default function App() {
                     onRecordingToggle={handleRecordingToggle}
                     onDismissAlert={handleDismissAlert}
                     onStatusChange={handleLfStatusChange}
-                    viewMode={viewMode}
                     isFullscreen={isGridFullscreen}
                   />
                 </div>
