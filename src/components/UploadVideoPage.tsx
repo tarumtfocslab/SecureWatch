@@ -50,44 +50,122 @@ function getDeleteUrl(mode: AnalysisMode, videoId: string) {
     : `${API_BASE}/api/offline/video/${encodeURIComponent(videoId)}`;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function describeUploadError(err: any, apiBase: string) {
+  const raw = String(err?.message || err || "Unknown upload error");
+
+  if (
+    raw.includes("Failed to fetch") ||
+    raw.includes("NetworkError") ||
+    raw.includes("Load failed")
+  ) {
+    return `Upload request failed to ${apiBase}. The Lost & Found backend is reachable only intermittently or the Cloudflare tunnel/public URL is unstable. Please check that the backend is running and the tunnel URL is still active.`;
+  }
+
+  if (raw.toLowerCase().includes("timeout") || raw.toLowerCase().includes("aborted")) {
+    return `Upload timed out while sending the video to ${apiBase}. This usually happens when the tunnel is slow or the video file is large. Try a smaller file first, or restart the backend/tunnel and try again.`;
+  }
+
+  return raw;
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = 120000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 async function uploadToBackend(file: File, mode: AnalysisMode) {
   const API_BASE = getApiBase(mode);
+  const url = `${API_BASE}/api/offline/upload`;
 
   console.log("[UPLOAD] mode =", mode);
   console.log("[UPLOAD] API_BASE =", API_BASE);
-  console.log("[UPLOAD] URL =", `${API_BASE}/api/offline/upload`);
+  console.log("[UPLOAD] URL =", url);
+  console.log("[UPLOAD] file =", {
+    name: file.name,
+    size: file.size,
+    type: file.type,
+  });
 
   const form = new FormData();
   form.append("file", file);
 
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE}/api/offline/upload`, {
-      method: "POST",
-      body: form,
-    });
-  } catch (err: any) {
-    console.error("[UPLOAD] fetch error:", err);
-    throw new Error(
-      `Upload request failed to ${API_BASE}: ${err?.message || String(err)}`
-    );
+  let lastError: any = null;
+
+  for (let attempt = 1; attempt <= (mode === "lost-found" ? 2 : 1); attempt++) {
+    try {
+      const res = await fetchWithTimeout(
+        url,
+        {
+          method: "POST",
+          body: form,
+        },
+        mode === "lost-found" ? 180000 : 120000
+      );
+
+      const text = await res.text();
+
+      console.log("[UPLOAD] attempt =", attempt);
+      console.log("[UPLOAD] status =", res.status);
+      console.log("[UPLOAD] body =", text);
+
+      if (!res.ok) {
+        let detail = text;
+
+        try {
+          const parsed = JSON.parse(text);
+          detail = parsed?.detail || parsed?.message || text;
+        } catch {
+          // keep original text
+        }
+
+        throw new Error(`Upload failed: ${res.status} ${detail}`);
+      }
+
+      try {
+        const json = JSON.parse(text);
+        console.log("[UPLOAD] parsed json =", json);
+        return json;
+      } catch {
+        throw new Error(`Backend returned non-JSON response: ${text}`);
+      }
+    } catch (err: any) {
+      lastError = err;
+      console.error("[UPLOAD] fetch/upload error:", err);
+
+      const aborted = err?.name === "AbortError";
+      const transient =
+        aborted ||
+        String(err?.message || "").includes("Failed to fetch") ||
+        String(err?.message || "").includes("NetworkError") ||
+        String(err?.message || "").includes("Load failed");
+
+      if (attempt < (mode === "lost-found" ? 2 : 1) && transient) {
+        await sleep(1200);
+        continue;
+      }
+
+      throw new Error(describeUploadError(err, API_BASE));
+    }
   }
 
-  const text = await res.text();
-  console.log("[UPLOAD] status:", res.status);
-  console.log("[UPLOAD] body:", text);
-
-  if (!res.ok) {
-    throw new Error(`Upload failed: ${res.status} ${text}`);
-  }
-
-  try {
-    const json = JSON.parse(text);
-    console.log("[UPLOAD] parsed json:", json);
-    return json;
-  } catch {
-    throw new Error(`Backend returned non-JSON response: ${text}`);
-  }
+  throw new Error(describeUploadError(lastError, API_BASE));
 }
 
 async function fetchAttireEnabledSources(): Promise<Record<string, boolean>> {
@@ -141,7 +219,6 @@ async function openAttireOfflineInLive(videoId: string) {
 
   const currentlyEnabled = allIds.filter((id) => isEnabled(id));
 
-  // Put clicked offline source at highest priority
   const orderedEnabled = [
     videoId,
     ...currentlyEnabled.filter((id) => id !== videoId),
@@ -150,12 +227,10 @@ async function openAttireOfflineInLive(videoId: string) {
   const keep = orderedEnabled.slice(0, slots);
   const disable = orderedEnabled.slice(slots);
 
-  // Ensure clicked source is ON
   if (!isEnabled(videoId)) {
     await setAttireSourceEnabled(videoId, true);
   }
 
-  // Disable overflow sources so clicked video can enter live grid immediately
   await Promise.allSettled(
     disable.map((id) => setAttireSourceEnabled(id, false))
   );
@@ -168,7 +243,10 @@ async function openAttireOfflineInLive(videoId: string) {
   window.dispatchEvent(new Event("storage"));
 }
 
-export function UploadVideoPage({onProcessingComplete, onOpenLostFoundSettings,}: UploadVideoPageProps) {
+export function UploadVideoPage({
+  onProcessingComplete,
+  onOpenLostFoundSettings,
+}: UploadVideoPageProps) {
   const nav = useNavigate();
   const loc = useLocation();
   const pollRef = useRef<number | null>(null);
@@ -196,7 +274,6 @@ export function UploadVideoPage({onProcessingComplete, onOpenLostFoundSettings,}
       return;
     }
 
-    // fallback for old router-based usage
     nav(`/lostfound/settings?offline=${encodeURIComponent(cleanStem)}`);
   };
 
@@ -257,11 +334,18 @@ export function UploadVideoPage({onProcessingComplete, onOpenLostFoundSettings,}
   const refreshVideos = async (targetMode: AnalysisMode = mode) => {
     try {
       const API_BASE = getApiBase(targetMode);
+      const url = `${API_BASE}/api/offline/videos`;
+
       console.log("[REFRESH] mode =", targetMode);
       console.log("[REFRESH] API_BASE =", API_BASE);
-      console.log("[REFRESH] URL =", `${API_BASE}/api/offline/videos`);
+      console.log("[REFRESH] URL =", url);
 
-      const res = await fetch(`${API_BASE}/api/offline/videos`, { cache: "no-store" });
+      const res = await fetchWithTimeout(
+        url,
+        { cache: "no-store" },
+        targetMode === "lost-found" ? 30000 : 20000
+      );
+
       console.log("[REFRESH] status =", res.status);
 
       if (!res.ok) throw new Error("Failed to load videos");
@@ -284,7 +368,12 @@ export function UploadVideoPage({onProcessingComplete, onOpenLostFoundSettings,}
     const run = async () => {
       try {
         const API_BASE = getApiBase(mode);
-        const res = await fetch(`${API_BASE}/api/offline/videos`, { cache: "no-store" });
+        const res = await fetchWithTimeout(
+          `${API_BASE}/api/offline/videos`,
+          { cache: "no-store" },
+          mode === "lost-found" ? 30000 : 20000
+        );
+
         if (!res.ok) throw new Error("Failed to load videos");
 
         const data = await res.json();
@@ -322,7 +411,7 @@ export function UploadVideoPage({onProcessingComplete, onOpenLostFoundSettings,}
 
     pollRef.current = window.setInterval(() => {
       refreshVideos(mode);
-    }, mode === "lost-found" ? 1200 : 15000);
+    }, mode === "lost-found" ? 1500 : 15000);
 
     return () => {
       if (pollRef.current) {
@@ -360,6 +449,8 @@ export function UploadVideoPage({onProcessingComplete, onOpenLostFoundSettings,}
     if (e.target.files && e.target.files[0]) {
       handleFiles(e.target.files);
     }
+
+    e.currentTarget.value = "";
   };
 
   const handleFiles = async (files: FileList) => {
@@ -386,6 +477,7 @@ export function UploadVideoPage({onProcessingComplete, onOpenLostFoundSettings,}
         h264_ready: false,
         analysis_status: null,
         is_analyzing: false,
+        error: null,
       },
       ...prev,
     ]);
@@ -406,6 +498,7 @@ export function UploadVideoPage({onProcessingComplete, onOpenLostFoundSettings,}
                 roi_ready: saved.roi_ready ?? v.roi_ready,
                 analysis_status: saved.analysis_status ?? v.analysis_status,
                 is_analyzing: saved.is_analyzing ?? v.is_analyzing,
+                error: null,
               }
             : v
         )
@@ -424,11 +517,21 @@ export function UploadVideoPage({onProcessingComplete, onOpenLostFoundSettings,}
     } catch (e: any) {
       console.error(e);
 
+      const msg = String(e?.message || e || "Upload failed");
+
       setUploadedVideos((prev) =>
-        prev.map((v) => (v.id === tempId ? { ...v, status: "failed" } : v))
+        prev.map((v) =>
+          v.id === tempId
+            ? {
+                ...v,
+                status: "failed",
+                error: msg,
+              }
+            : v
+        )
       );
 
-      alert(`Upload failed: ${e?.message || e}`);
+      alert(`Upload failed: ${msg}`);
     }
   };
 
