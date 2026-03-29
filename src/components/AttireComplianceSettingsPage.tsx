@@ -108,6 +108,7 @@ type UnifiedSource = {
 };
 
 type AttireRetentionConfig = {
+  enabled: boolean;
   retention_days: number;
 };
 
@@ -117,11 +118,11 @@ async function fetchRetentionConfig(): Promise<AttireRetentionConfig> {
   return await res.json();
 }
 
-async function saveRetentionConfig(retention_days: number) {
+async function saveRetentionConfig(enabled: boolean, retention_days: number) {
   const res = await fetch(`${API_BASE}/api/attire/data-retention`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ retention_days }),
+    body: JSON.stringify({ enabled, retention_days }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
@@ -687,6 +688,7 @@ export function AttireComplianceSettingsPage() {
     play_sound: false,
   });
 
+  const [retentionEnabled, setRetentionEnabled] = useState<boolean>(true);
   const [retentionDays, setRetentionDays] = useState<number>(7);
   const [retentionSaving, setRetentionSaving] = useState(false);
   const [clearingEvents, setClearingEvents] = useState(false);
@@ -697,9 +699,10 @@ export function AttireComplianceSettingsPage() {
       try {
         const cfg = await fetchRetentionConfig();
         if (!alive) return;
+        setRetentionEnabled(Boolean(cfg?.enabled ?? true));
         setRetentionDays(Number(cfg?.retention_days ?? 7));
       } catch {
-        // keep default
+        // keep defaults
       }
     })();
     return () => {
@@ -1035,19 +1038,22 @@ export function AttireComplianceSettingsPage() {
   const handleSaveRetentionSettings = async () => {
     setRetentionSaving(true);
     try {
-      const data = await saveRetentionConfig(retentionDays);
+      const data = await saveRetentionConfig(retentionEnabled, retentionDays);
 
-      // let other pages know data changed
       localStorage.setItem("attire:retentionVer", String(Date.now()));
       localStorage.setItem("attire:eventsVer", String(Date.now()));
       window.dispatchEvent(new Event("attire:retentionChanged"));
       window.dispatchEvent(new Event("attire:eventsChanged"));
 
-      alert(
-        data?.pruned_events > 0
-          ? `Retention saved. ${data.pruned_events} old event(s) were removed.`
-          : "Data retention settings saved."
-      );
+      if (!retentionEnabled) {
+        alert("Data retention disabled. Past attire data will be kept until manually cleared.");
+      } else {
+        alert(
+          data?.pruned_events > 0
+            ? `Retention saved. ${data.pruned_events} old event(s) were removed.`
+            : "Data retention settings saved."
+        );
+      }
     } catch (e: any) {
       alert(`Save data retention failed: ${e?.message || e}`);
     } finally {
@@ -2309,13 +2315,56 @@ export function AttireComplianceSettingsPage() {
               </div>
 
               <div className="max-w-3xl space-y-6">
+                {/* Retention master toggle */}
+                <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 space-y-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-white text-sm font-medium">Enable Data Retention</div>
+                      <div className="text-slate-400 text-xs mt-1">
+                        When enabled, old attire event records and evidence images will be removed automatically.
+                        When disabled, all past data will be kept unless manually cleared.
+                      </div>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={retentionEnabled}
+                        onChange={(e) => setRetentionEnabled(e.target.checked)}
+                        className="sr-only peer"
+                        disabled={retentionSaving || clearingEvents}
+                      />
+                      <div className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:bg-orange-600
+                        after:content-[''] after:absolute after:top-[2px] after:left-[2px]
+                        after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all
+                        peer-checked:after:translate-x-full"></div>
+                    </label>
+                  </div>
+
+                  {!retentionEnabled ? (
+                    <div className="bg-green-900/20 border border-green-800 rounded-lg p-4">
+                      <p className="text-green-300 text-sm">
+                        ✅ Data retention is OFF. The system will keep all past attire events and evidence
+                        until they are manually cleared.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-orange-900/20 border border-orange-800 rounded-lg p-4">
+                      <p className="text-orange-300 text-sm">
+                        🕒 Data retention is ON. Events older than the selected period will be deleted automatically.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 {/* Retention days */}
                 <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="text-white text-sm font-medium">Violation Event Retention</div>
                       <div className="text-slate-400 text-xs">
-                        Event records, dashboard/report history, and evidence images older than this period will be removed automatically
+                        Event records, dashboard/report history, and evidence images older than this period
+                        will be removed automatically
                       </div>
                     </div>
                     <div className="text-slate-200 text-sm font-medium">
@@ -2331,7 +2380,7 @@ export function AttireComplianceSettingsPage() {
                     value={retentionDays}
                     onChange={(e) => setRetentionDays(Number(e.target.value))}
                     className="w-full"
-                    disabled={retentionSaving || clearingEvents}
+                    disabled={!retentionEnabled || retentionSaving || clearingEvents}
                   />
 
                   <div className="flex justify-between text-slate-500 text-xs">
@@ -2343,7 +2392,8 @@ export function AttireComplianceSettingsPage() {
                 {/* Warning */}
                 <div className="bg-yellow-900/20 border border-yellow-800 rounded-lg p-4">
                   <p className="text-yellow-300 text-sm">
-                    ⚠️ Data retention is applied across the attire module, including Events, Dashboard, Reports, CSV/PDF export, and evidence snapshots.
+                    ⚠️ Data retention is applied across the attire module, including Events, Dashboard,
+                    Reports, CSV/PDF export, and evidence snapshots.
                   </p>
                 </div>
 
