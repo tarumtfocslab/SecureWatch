@@ -97,6 +97,7 @@ type OfflineVideoItem = {
 type LFSettings = {
   notifications_enabled: boolean;
   notifications_sound_enabled?: boolean;
+  data_retention_days?: number;
   cameras_enabled?: Record<string, boolean>;
 };
 
@@ -672,8 +673,8 @@ interface LostAndFoundSettingsPageProps {
 export default function LostAndFoundSettingsPage({
   offlineStem: offlineStemProp,
 }: LostAndFoundSettingsPageProps) {
-  type Tab = "roi" | "notifications" | "dewarp";
-  const [tab, setTab] = useState<Tab>("roi");
+  type Tab = "sources" | "roi" | "notifications" | "dewarp" | "retention";
+  const [tab, setTab] = useState<Tab>("sources");
 
   const loc = useLocation();
   const q = new URLSearchParams(loc.search);
@@ -732,6 +733,7 @@ export default function LostAndFoundSettingsPage({
   const [settings, setSettings] = useState<LFSettings>({
     notifications_enabled: true,
     notifications_sound_enabled: false,
+    data_retention_days: 90,
     cameras_enabled: {},
   });
 
@@ -1004,14 +1006,11 @@ export default function LostAndFoundSettingsPage({
         kind: "upload" as const,
         enabled: !!u.enabled,
         subtitle: u.filename ? `file: ${u.filename}` : undefined,
-
         video_type: u.video_type ?? meta?.video_type,
-
         is_fisheye:
           typeof u.is_fisheye === "boolean"
             ? u.is_fisheye
             : meta?.is_fisheye,
-
         views_count:
           Number.isFinite(Number(u.views_count))
             ? Number(u.views_count)
@@ -1028,14 +1027,11 @@ export default function LostAndFoundSettingsPage({
         kind: "rtsp" as const,
         enabled: !!r.enabled,
         subtitle: r.url ? `url: ${r.url}` : undefined,
-
         video_type: r.video_type ?? meta?.video_type,
-
         is_fisheye:
           typeof r.is_fisheye === "boolean"
             ? r.is_fisheye
             : meta?.is_fisheye,
-
         views_count:
           Number.isFinite(Number(r.views_count))
             ? Number(r.views_count)
@@ -1049,8 +1045,6 @@ export default function LostAndFoundSettingsPage({
   }, [uploadSources, rtspSources, cameraMetaMap]);
 
   const liveSourcesMergedForCards = useMemo(() => liveSourcesAll, [liveSourcesAll]);
-
-
 
   const refreshLiveSources = async () => {
     await Promise.all([loadUploadSources(), loadRtspSources()]);
@@ -1219,6 +1213,11 @@ export default function LostAndFoundSettingsPage({
             ...prev,
             notifications_enabled: !!(st as any)?.notifications_enabled,
             notifications_sound_enabled: !!(st as any)?.notifications_sound_enabled,
+            data_retention_days: clamp(
+              Number((st as any)?.data_retention_days ?? 90) || 90,
+              1,
+              3650
+            ),
             cameras_enabled:
               (st as any)?.cameras_enabled || prev.cameras_enabled || {},
           }));
@@ -1253,7 +1252,6 @@ export default function LostAndFoundSettingsPage({
         setLoading(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1316,7 +1314,6 @@ export default function LostAndFoundSettingsPage({
     }
 
     loadFisheyeCfg(camId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, liveCamId, offlineStem, isFisheye]);
 
   useEffect(() => {
@@ -1445,7 +1442,6 @@ export default function LostAndFoundSettingsPage({
         window.clearTimeout(dewarpDebounceRef.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fisheyeCfg, tab, isFisheye, currentDewarpCamId, fisheyeCfgLoading]);
 
   function getCurrentViewPolys() {
@@ -1680,6 +1676,47 @@ export default function LostAndFoundSettingsPage({
     }
   }
 
+  async function saveRetentionSettings() {
+    try {
+      setSaving(true);
+      setMsg(null);
+
+      const days = clamp(
+        Number(settings.data_retention_days ?? 90) || 90,
+        1,
+        3650
+      );
+
+      const payload = {
+        data_retention_days: days,
+      };
+
+      await apiPost("/api/lostfound/settings", payload);
+
+      try {
+        const st = await apiGet<LFSettings>("/api/lostfound/settings");
+        setSettings((prev) => ({
+          ...prev,
+          notifications_enabled: !!(st as any)?.notifications_enabled,
+          notifications_sound_enabled: !!(st as any)?.notifications_sound_enabled,
+          data_retention_days: clamp(
+            Number((st as any)?.data_retention_days ?? 90) || 90,
+            1,
+            3650
+          ),
+          cameras_enabled:
+            (st as any)?.cameras_enabled || prev.cameras_enabled || {},
+        }));
+      } catch {}
+
+      setMsg({ type: "ok", text: "Data retention saved." });
+    } catch (e: any) {
+      setMsg({ type: "err", text: `Save failed: ${String(e?.message || e)}` });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const selectedOffline = useMemo(
     () => offlineVideos.find((v) => v.id === offlineStem) || null,
     [offlineVideos, offlineStem]
@@ -1712,7 +1749,7 @@ export default function LostAndFoundSettingsPage({
                 Lost &amp; Found Settings
               </div>
               <div className={`text-sm ${MUTED}`}>
-                ROI • Notifications • Dewarp • Live Sources
+                Sources • ROI • Notifications • Dewarp • Data Retention
               </div>
             </div>
           </div>
@@ -1746,11 +1783,30 @@ export default function LostAndFoundSettingsPage({
                 <Save className="w-4 h-4" /> Save Notifications
               </button>
             )}
+
+            {tab === "retention" && (
+              <button
+                onClick={saveRetentionSettings}
+                disabled={saving}
+                className={primaryBtn}
+                type="button"
+              >
+                <Save className="w-4 h-4" /> Save Retention
+              </button>
+            )}
           </div>
         </div>
 
         <div className="w-full px-6 pb-3">
           <div className="flex flex-wrap gap-2">
+            <TabButton
+              active={tab === "sources"}
+              onClick={() => setTab("sources")}
+              icon={<Video className="w-4 h-4" />}
+            >
+              Sources
+            </TabButton>
+
             <TabButton
               active={tab === "roi"}
               onClick={() => setTab("roi")}
@@ -1774,566 +1830,578 @@ export default function LostAndFoundSettingsPage({
             >
               Dewarp
             </TabButton>
+
+            <TabButton
+              active={tab === "retention"}
+              onClick={() => setTab("retention")}
+              icon={<Trash2 className="w-4 h-4" />}
+            >
+              Data Retention
+            </TabButton>
           </div>
         </div>
       </div>
 
       <div className="w-full px-6 py-6">
-        <div
-          className={`rounded-2xl border ${BORDER} ${CARD_BG} shadow-sm p-4 mb-6`}
-        >
-          <div className="flex flex-col lg:flex-row lg:items-end gap-4">
-            <div className="flex-1">
-              <div
-                className={`text-sm font-semibold ${TEXT} mb-2 flex items-center gap-2`}
-              >
-                <Video className="w-4 h-4" /> Mode &amp; Source
-              </div>
-
-              <div className="flex flex-col md:flex-row gap-3">
-                <div className="w-full md:w-44">
-                  <label className={`text-xs ${MUTED2}`}>Mode</label>
-                  <select
-                    className={selectCls}
-                    value={mode}
-                    onChange={(e) => setMode(e.target.value as Mode)}
+        {tab === "sources" && (
+          <>
+            <div
+              className={`rounded-2xl border ${BORDER} ${CARD_BG} shadow-sm p-4 mb-6`}
+            >
+              <div className="flex flex-col lg:flex-row lg:items-end gap-4">
+                <div className="flex-1">
+                  <div
+                    className={`text-sm font-semibold ${TEXT} mb-2 flex items-center gap-2`}
                   >
-                    <option value="live">Live</option>
-                    <option value="offline">Offline</option>
-                  </select>
+                    <Video className="w-4 h-4" /> Mode &amp; Source
+                  </div>
+
+                  <div className="flex flex-col md:flex-row gap-3">
+                    <div className="w-full md:w-44">
+                      <label className={`text-xs ${MUTED2}`}>Mode</label>
+                      <select
+                        className={selectCls}
+                        value={mode}
+                        onChange={(e) => setMode(e.target.value as Mode)}
+                      >
+                        <option value="live">Live</option>
+                        <option value="offline">Offline</option>
+                      </select>
+                    </div>
+
+                    {mode === "live" ? (
+                      <div className="flex-1">
+                        <label className={`text-xs ${MUTED2}`}>Camera (All)</label>
+                        <select
+                          className={selectCls}
+                          value={liveCamId}
+                          onChange={(e) => setLiveCamId(e.target.value)}
+                        >
+                          {liveSourcesAll.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              [{c.kind.toUpperCase()}] {c.name} ({c.id}){" "}
+                              {c.enabled ? "" : "— DISABLED"}
+                            </option>
+                          ))}
+                        </select>
+
+                        <div
+                          className={`mt-2 text-xs ${MUTED2} flex items-center gap-2`}
+                        >
+                          <Cctv className="w-4 h-4" />
+                          <span>
+                            {selectedLiveLabel} •{" "}
+                            {isFisheye ? "Fisheye (8 views)" : "Normal (1 view)"}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex-1">
+                        <label className={`text-xs ${MUTED2}`}>Offline Video</label>
+                        <select
+                          className={selectCls}
+                          value={offlineStem}
+                          onChange={(e) => setOfflineStem(e.target.value)}
+                        >
+                          {offlineVideos.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.name} ({v.id})
+                            </option>
+                          ))}
+                        </select>
+
+                        <div
+                          className={`mt-2 text-xs ${MUTED2} flex items-center gap-2`}
+                        >
+                          <Video className="w-4 h-4" />
+                          <span>
+                            {selectedOffline?.duration
+                              ? `${selectedOffline.duration} • `
+                              : ""}
+                            {selectedOffline?.h264_ready
+                              ? "h264 ready"
+                              : "h264 not ready"}{" "}
+                            • {isFisheye ? "Fisheye (8 views)" : "Normal (1 view)"}
+                            {selectedOffline?.analysis_status
+                              ? ` • analyze=${selectedOffline.analysis_status}`
+                              : ""}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-
-                {mode === "live" ? (
-                  <div className="flex-1">
-                    <label className={`text-xs ${MUTED2}`}>Camera (All)</label>
-                    <select
-                      className={selectCls}
-                      value={liveCamId}
-                      onChange={(e) => setLiveCamId(e.target.value)}
-                    >
-                      {liveSourcesAll.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          [{c.kind.toUpperCase()}] {c.name} ({c.id}){" "}
-                          {c.enabled ? "" : "— DISABLED"}
-                        </option>
-                      ))}
-                    </select>
-
-                    <div
-                      className={`mt-2 text-xs ${MUTED2} flex items-center gap-2`}
-                    >
-                      <Cctv className="w-4 h-4" />
-                      <span>
-                        {selectedLiveLabel} •{" "}
-                        {isFisheye ? "Fisheye (8 views)" : "Normal (1 view)"}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex-1">
-                    <label className={`text-xs ${MUTED2}`}>Offline Video</label>
-                    <select
-                      className={selectCls}
-                      value={offlineStem}
-                      onChange={(e) => setOfflineStem(e.target.value)}
-                    >
-                      {offlineVideos.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.name} ({v.id})
-                        </option>
-                      ))}
-                    </select>
-
-                    <div
-                      className={`mt-2 text-xs ${MUTED2} flex items-center gap-2`}
-                    >
-                      <Video className="w-4 h-4" />
-                      <span>
-                        {selectedOffline?.duration
-                          ? `${selectedOffline.duration} • `
-                          : ""}
-                        {selectedOffline?.h264_ready
-                          ? "h264 ready"
-                          : "h264 not ready"}{" "}
-                        • {isFisheye ? "Fisheye (8 views)" : "Normal (1 view)"}
-                        {selectedOffline?.analysis_status
-                          ? ` • analyze=${selectedOffline.analysis_status}`
-                          : ""}
-                      </span>
-                    </div>
-                  </div>
-                )}
               </div>
-            </div>
-          </div>
 
-          {mode === "live" && (
-            <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/20 p-3">
-              <div className="flex items-center justify-between">
-                <div
-                  className={`text-sm font-semibold ${TEXT} flex items-center gap-2`}
-                >
-                  <Folder className="w-4 h-4" />
-                  Live Sources (Upload + RTSP) (Enable/Disable)
+              {mode === "live" && (
+                <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900/20 p-3">
+                  <div className="flex items-center justify-between">
+                    <div
+                      className={`text-sm font-semibold ${TEXT} flex items-center gap-2`}
+                    >
+                      <Folder className="w-4 h-4" />
+                      Live Sources (Upload + RTSP) (Enable/Disable)
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={refreshLiveSources}
+                      className={softBtn}
+                      title="Reload upload + rtsp lists"
+                    >
+                      <RefreshCw className="w-4 h-4" /> Refresh
+                    </button>
+                  </div>
+
+                  <div className={`mt-2 text-xs ${MUTED2}`}>
+                    Upload listing comes from:
+                    <code className="text-slate-200">
+                      {" "}
+                      /api/lostfound/upload_sources
+                    </code>
+                    . Upload toggle calls:
+                    <code className="text-slate-200">
+                      {" "}
+                      /api/lostfound/cameras_enabled/toggle/:camId
+                    </code>
+                    . RTSP listing comes from:
+                    <code className="text-slate-200"> /api/lostfound/rtsp_sources</code>.
+                    RTSP toggle calls:
+                    <code className="text-slate-200"> /api/lostfound/rtsp_sources/toggle/:id</code>.
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {liveSourcesMergedForCards.length === 0 ? (
+                      <div className={`text-sm ${MUTED2} flex items-start gap-2`}>
+                        <Info className="w-4 h-4 mt-[2px]" />
+                        No live sources found.
+                      </div>
+                    ) : (
+                      liveSourcesMergedForCards.map((c) => {
+                        const enabled = !!c.enabled;
+
+                        const badge =
+                          c.kind === "upload"
+                            ? "border-sky-700 bg-sky-900/15 text-sky-200"
+                            : "border-violet-700 bg-violet-900/15 text-violet-200";
+
+                        const badgeText = c.kind === "upload" ? "UPLOAD" : "RTSP";
+
+                        const toggleFn =
+                          c.kind === "upload"
+                            ? () => toggleUploadCamEnabled(c.id, !enabled)
+                            : () => toggleRtspEnabled(c.id, !enabled);
+
+                        return (
+                          <div
+                            key={`${c.kind}-${c.id}`}
+                            className={
+                              "rounded-xl border border-slate-700 bg-slate-900/30 p-3 flex items-start justify-between gap-3 " +
+                              (!enabled ? "opacity-60" : "")
+                            }
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <div className="text-sm font-semibold text-slate-100 truncate">
+                                  {c.name}
+                                </div>
+
+                                <span
+                                  className={`text-[10px] px-2 py-0.5 rounded-full border ${badge}`}
+                                >
+                                  {badgeText}
+                                </span>
+
+                                <span
+                                  className={
+                                    "text-[10px] px-2 py-0.5 rounded-full border " +
+                                    (enabled
+                                      ? "border-emerald-700 bg-emerald-900/15 text-emerald-200"
+                                      : "border-slate-700 bg-slate-900/20 text-slate-300")
+                                  }
+                                >
+                                  {enabled ? "ENABLED" : "DISABLED"}
+                                </span>
+                              </div>
+
+                              <div className="mt-1 text-xs text-slate-400 break-all">
+                                {c.id}
+                              </div>
+
+                              {c.subtitle ? (
+                                <div className="mt-1 text-[11px] text-slate-500 break-all">
+                                  {c.subtitle}
+                                </div>
+                              ) : null}
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                className={
+                                  "px-3 py-2 rounded-xl border text-sm flex items-center gap-2 " +
+                                  (enabled
+                                    ? "border-emerald-700/60 bg-emerald-900/10 text-emerald-200 hover:bg-emerald-900/20"
+                                    : "border-slate-700 bg-slate-900/40 text-slate-200 hover:bg-slate-800/60")
+                                }
+                                onClick={toggleFn}
+                                disabled={saving}
+                                title="Toggle source"
+                              >
+                                {enabled ? (
+                                  <Power className="w-4 h-4" />
+                                ) : (
+                                  <PowerOff className="w-4 h-4" />
+                                )}
+                                {enabled ? "On" : "Off"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
+              )}
+
+              {mode === "live" && (
+                <div className="mt-6 grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4">
+                  <div className={`rounded-2xl border ${BORDER} p-3 ${CARD_BG}`}>
+                    <div className="flex items-center justify-between">
+                      <div
+                        className={`text-sm font-semibold ${TEXT} flex items-center gap-2`}
+                      >
+                        <Link2 className="w-4 h-4" />
+                        RTSP Sources (Live)
+                      </div>
+                      <button
+                        type="button"
+                        onClick={loadRtspSources}
+                        className={softBtn}
+                        title="Reload RTSP sources"
+                      >
+                        <RefreshCw className="w-4 h-4" /> Refresh
+                      </button>
+                    </div>
+
+                    <div className={`mt-2 text-xs ${MUTED2}`}>
+                      These sources are saved in your backend RTSP store. Use the{" "}
+                      <b>Enabled</b> switch to control which sources are active/available
+                      for Live View.
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      {rtspSources.length === 0 ? (
+                        <div className={`text-sm ${MUTED2} flex items-start gap-2`}>
+                          <Info className="w-4 h-4 mt-[2px]" />
+                          No RTSP sources yet. Add one using the form on the right.
+                        </div>
+                      ) : (
+                        rtspSources.map((s) => (
+                          <div
+                            key={s.id}
+                            className="rounded-xl border border-slate-700 bg-slate-900/30 p-3 flex items-start justify-between gap-3"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <div className="text-sm font-semibold text-slate-100 truncate">
+                                  {s.name}
+                                </div>
+                                <span
+                                  className={
+                                    "text-[10px] px-2 py-0.5 rounded-full border " +
+                                    (s.enabled
+                                      ? "border-emerald-700 bg-emerald-900/15 text-emerald-200"
+                                      : "border-slate-700 bg-slate-900/20 text-slate-300")
+                                  }
+                                >
+                                  {s.enabled ? "ENABLED" : "DISABLED"}
+                                </span>
+                              </div>
+                              <div className="mt-1 text-xs text-slate-400 break-all">
+                                {s.url}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                className={
+                                  "px-3 py-2 rounded-xl border text-sm flex items-center gap-2 " +
+                                  (s.enabled
+                                    ? "border-emerald-700/60 bg-emerald-900/10 text-emerald-200 hover:bg-emerald-900/20"
+                                    : "border-slate-700 bg-slate-900/40 text-slate-200 hover:bg-slate-800/60")
+                                }
+                                onClick={() => toggleRtspEnabled(s.id, !s.enabled)}
+                                disabled={saving}
+                                title="Toggle enabled"
+                              >
+                                {s.enabled ? (
+                                  <Power className="w-4 h-4" />
+                                ) : (
+                                  <PowerOff className="w-4 h-4" />
+                                )}
+                                {s.enabled ? "On" : "Off"}
+                              </button>
+
+                              <button
+                                type="button"
+                                className={softBtn}
+                                onClick={() =>
+                                  setRtspForm({
+                                    id: s.id,
+                                    name: s.name,
+                                    url: s.url,
+                                    enabled: s.enabled,
+                                  })
+                                }
+                                title="Edit"
+                              >
+                                <Pencil className="w-4 h-4" /> Edit
+                              </button>
+
+                              <button
+                                type="button"
+                                className={
+                                  "px-3 py-2 rounded-xl border border-rose-700/50 bg-rose-950/20 hover:bg-rose-950/35 " +
+                                  "text-rose-200 text-sm flex items-center gap-2"
+                                }
+                                onClick={() => deleteRtspSource(s.id)}
+                                disabled={saving}
+                                title="Delete"
+                              >
+                                <Trash2 className="w-4 h-4" /> Delete
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className={`rounded-2xl border ${BORDER} p-3 ${CARD_BG}`}>
+                    <div
+                      className={`text-sm font-semibold ${TEXT} flex items-center gap-2`}
+                    >
+                      <Plus className="w-4 h-4" />
+                      {rtspForm.id ? "Edit RTSP Source" : "Add RTSP Source"}
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <label className={`text-xs ${MUTED2}`}>Name</label>
+                        <input
+                          className={inputCls}
+                          value={rtspForm.name}
+                          onChange={(e) =>
+                            setRtspForm((p) => ({ ...p, name: e.target.value }))
+                          }
+                          placeholder="e.g., Gate Camera 1"
+                        />
+                      </div>
+
+                      <div>
+                        <label className={`text-xs ${MUTED2}`}>RTSP URL</label>
+                        <input
+                          className={inputCls}
+                          value={rtspForm.url}
+                          onChange={(e) =>
+                            setRtspForm((p) => ({ ...p, url: e.target.value }))
+                          }
+                          placeholder="rtsp://username:password@ip:554/stream"
+                        />
+                        <div className={`mt-1 text-[11px] ${MUTED2}`}>
+                          Tip: Use <code className="text-slate-200">rtsp://</code>{" "}
+                          (or <code className="text-slate-200">rtsps://</code>).
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900/30 px-3 py-2">
+                        <div className="text-sm text-slate-200">Enabled</div>
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4"
+                            checked={!!rtspForm.enabled}
+                            onChange={(e) =>
+                              setRtspForm((p) => ({
+                                ...p,
+                                enabled: e.target.checked,
+                              }))
+                            }
+                          />
+                          <span
+                            className={
+                              "text-xs px-2 py-0.5 rounded-full border " +
+                              (rtspForm.enabled
+                                ? "border-emerald-700 bg-emerald-900/15 text-emerald-200"
+                                : "border-slate-700 bg-slate-900/20 text-slate-300")
+                            }
+                          >
+                            {rtspForm.enabled ? "ON" : "OFF"}
+                          </span>
+                        </label>
+                      </div>
+
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          type="button"
+                          className={greenBtn}
+                          onClick={upsertRtspSource}
+                          disabled={saving}
+                        >
+                          <Save className="w-4 h-4" />
+                          {rtspForm.id ? "Update" : "Add"}
+                        </button>
+
+                        <button
+                          type="button"
+                          className={softBtn}
+                          onClick={resetRtspForm}
+                          disabled={saving}
+                        >
+                          <RefreshCw className="w-4 h-4" /> Clear
+                        </button>
+                      </div>
+
+                      <div className={`text-xs ${MUTED2}`}>
+                        After adding/enabling sources, your backend can use this list
+                        to decide which RTSP cameras appear or run in <b>Live View</b>.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {tab === "roi" && isFisheye && (
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
+            <div className={`rounded-2xl border ${BORDER} p-3 ${CARD_BG}`}>
+              <div className={`text-sm font-semibold ${TEXT} mb-2`}>
+                Fisheye View Controls
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className={
+                    "px-3 py-2 rounded-xl border text-sm " +
+                    (group === "A"
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : "border-slate-700 bg-slate-900/40 hover:bg-slate-800/60 text-slate-100")
+                  }
+                  onClick={() => {
+                    const viewId = getFirstViewIdOfGroup("A");
+                    setGroup("A");
+                    setActiveViewIdx(viewId);
+                    setDraft([]);
+                    setActivePolyIdx(null);
+                  }}
+                >
+                  Group A
+                </button>
 
                 <button
                   type="button"
-                  onClick={refreshLiveSources}
-                  className={softBtn}
-                  title="Reload upload + rtsp lists"
+                  className={
+                    "px-3 py-2 rounded-xl border text-sm " +
+                    (group === "B"
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : "border-slate-700 bg-slate-900/40 hover:bg-slate-800/60 text-slate-100")
+                  }
+                  onClick={() => {
+                    const viewId = getFirstViewIdOfGroup("B");
+                    setGroup("B");
+                    setActiveViewIdx(viewId);
+                    setDraft([]);
+                    setActivePolyIdx(null);
+                  }}
                 >
-                  <RefreshCw className="w-4 h-4" /> Refresh
+                  Group B
                 </button>
+
+                <div className="w-px h-8 bg-slate-800 mx-1" />
+
+                <div className="text-sm text-slate-200">
+                  Active view:{" "}
+                  <span className="font-semibold">
+                    {prettyViewName(activeViewName)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+                {Array.from({ length: 8 }, (_, viewId) => {
+                  const nm = getViewNameById(viewId);
+                  return (
+                    <button
+                      key={viewId}
+                      type="button"
+                      onClick={() => {
+                        setActiveViewIdx(viewId);
+                        setGroup(getGroupByViewId(viewId));
+                        setDraft([]);
+                        setActivePolyIdx(null);
+                      }}
+                      className={
+                        "px-3 py-2 rounded-xl border text-xs text-left " +
+                        (activeViewIdx === viewId
+                          ? "border-emerald-700 bg-emerald-900/15 text-emerald-100"
+                          : "border-slate-700 bg-slate-900/40 hover:bg-slate-800/60 text-slate-100")
+                      }
+                    >
+                      <div className="font-semibold">
+                        {viewId}. {nm}
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        {prettyViewName(nm)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className={`rounded-2xl border ${BORDER} p-3 ${CARD_BG}`}>
+              <div className="flex items-center justify-between">
+                <div className={`text-sm font-semibold ${TEXT}`}>
+                  Group Preview
+                </div>
+                {mode === "live" && (
+                  <button
+                    type="button"
+                    onClick={refreshFrozen}
+                    className={softBtn}
+                    title="Refresh frozen preview"
+                  >
+                    <RefreshCw className="w-4 h-4" /> Refresh Frame
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-3 rounded-xl overflow-hidden border border-slate-800 bg-slate-900/60">
+                {groupFrameUrl ? (
+                  <img
+                    src={groupFrameUrl}
+                    alt="Group frame"
+                    className="w-full h-auto block"
+                    draggable={false}
+                  />
+                ) : (
+                  <div className="p-6 text-sm text-slate-400">No preview</div>
+                )}
               </div>
 
               <div className={`mt-2 text-xs ${MUTED2}`}>
-                Upload listing comes from:
-                <code className="text-slate-200">
-                  {" "}
-                  /api/lostfound/upload_sources
-                </code>
-                . Upload toggle calls:
-                <code className="text-slate-200">
-                  {" "}
-                  /api/lostfound/cameras_enabled/toggle/:camId
-                </code>
-                . RTSP listing comes from:
-                <code className="text-slate-200"> /api/lostfound/rtsp_sources</code>.
-                RTSP toggle calls:
-                <code className="text-slate-200"> /api/lostfound/rtsp_sources/toggle/:id</code>.
-              </div>
-
-              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
-                {liveSourcesMergedForCards.length === 0 ? (
-                  <div className={`text-sm ${MUTED2} flex items-start gap-2`}>
-                    <Info className="w-4 h-4 mt-[2px]" />
-                    No live sources found.
-                  </div>
-                ) : (
-                  liveSourcesMergedForCards.map((c) => {
-                    const enabled = !!c.enabled;
-
-                    const badge =
-                      c.kind === "upload"
-                        ? "border-sky-700 bg-sky-900/15 text-sky-200"
-                        : "border-violet-700 bg-violet-900/15 text-violet-200";
-
-                    const badgeText = c.kind === "upload" ? "UPLOAD" : "RTSP";
-
-                    const toggleFn =
-                      c.kind === "upload"
-                        ? () => toggleUploadCamEnabled(c.id, !enabled)
-                        : () => toggleRtspEnabled(c.id, !enabled);
-
-                    return (
-                      <div
-                        key={`${c.kind}-${c.id}`}
-                        className={
-                          "rounded-xl border border-slate-700 bg-slate-900/30 p-3 flex items-start justify-between gap-3 " +
-                          (!enabled ? "opacity-60" : "")
-                        }
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <div className="text-sm font-semibold text-slate-100 truncate">
-                              {c.name}
-                            </div>
-
-                            <span
-                              className={`text-[10px] px-2 py-0.5 rounded-full border ${badge}`}
-                            >
-                              {badgeText}
-                            </span>
-
-                            <span
-                              className={
-                                "text-[10px] px-2 py-0.5 rounded-full border " +
-                                (enabled
-                                  ? "border-emerald-700 bg-emerald-900/15 text-emerald-200"
-                                  : "border-slate-700 bg-slate-900/20 text-slate-300")
-                              }
-                            >
-                              {enabled ? "ENABLED" : "DISABLED"}
-                            </span>
-                          </div>
-
-                          <div className="mt-1 text-xs text-slate-400 break-all">
-                            {c.id}
-                          </div>
-
-                          {c.subtitle ? (
-                            <div className="mt-1 text-[11px] text-slate-500 break-all">
-                              {c.subtitle}
-                            </div>
-                          ) : null}
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            className={
-                              "px-3 py-2 rounded-xl border text-sm flex items-center gap-2 " +
-                              (enabled
-                                ? "border-emerald-700/60 bg-emerald-900/10 text-emerald-200 hover:bg-emerald-900/20"
-                                : "border-slate-700 bg-slate-900/40 text-slate-200 hover:bg-slate-800/60")
-                            }
-                            onClick={toggleFn}
-                            disabled={saving}
-                            title="Toggle source"
-                          >
-                            {enabled ? (
-                              <Power className="w-4 h-4" />
-                            ) : (
-                              <PowerOff className="w-4 h-4" />
-                            )}
-                            {enabled ? "On" : "Off"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
+                {mode === "live"
+                  ? "Live settings uses frozen snapshots for stable ROI drawing."
+                  : "Offline preview uses current decoded frame (may change between requests)."}
               </div>
             </div>
-          )}
-
-          {mode === "live" && (
-            <div className="mt-6 grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4">
-              <div className={`rounded-2xl border ${BORDER} p-3 ${CARD_BG}`}>
-                <div className="flex items-center justify-between">
-                  <div
-                    className={`text-sm font-semibold ${TEXT} flex items-center gap-2`}
-                  >
-                    <Link2 className="w-4 h-4" />
-                    RTSP Sources (Live)
-                  </div>
-                  <button
-                    type="button"
-                    onClick={loadRtspSources}
-                    className={softBtn}
-                    title="Reload RTSP sources"
-                  >
-                    <RefreshCw className="w-4 h-4" /> Refresh
-                  </button>
-                </div>
-
-                <div className={`mt-2 text-xs ${MUTED2}`}>
-                  These sources are saved in your backend RTSP store. Use the{" "}
-                  <b>Enabled</b> switch to control which sources are active/available
-                  for Live View.
-                </div>
-
-                <div className="mt-3 space-y-2">
-                  {rtspSources.length === 0 ? (
-                    <div className={`text-sm ${MUTED2} flex items-start gap-2`}>
-                      <Info className="w-4 h-4 mt-[2px]" />
-                      No RTSP sources yet. Add one using the form on the right.
-                    </div>
-                  ) : (
-                    rtspSources.map((s) => (
-                      <div
-                        key={s.id}
-                        className="rounded-xl border border-slate-700 bg-slate-900/30 p-3 flex items-start justify-between gap-3"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <div className="text-sm font-semibold text-slate-100 truncate">
-                              {s.name}
-                            </div>
-                            <span
-                              className={
-                                "text-[10px] px-2 py-0.5 rounded-full border " +
-                                (s.enabled
-                                  ? "border-emerald-700 bg-emerald-900/15 text-emerald-200"
-                                  : "border-slate-700 bg-slate-900/20 text-slate-300")
-                              }
-                            >
-                              {s.enabled ? "ENABLED" : "DISABLED"}
-                            </span>
-                          </div>
-                          <div className="mt-1 text-xs text-slate-400 break-all">
-                            {s.url}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            className={
-                              "px-3 py-2 rounded-xl border text-sm flex items-center gap-2 " +
-                              (s.enabled
-                                ? "border-emerald-700/60 bg-emerald-900/10 text-emerald-200 hover:bg-emerald-900/20"
-                                : "border-slate-700 bg-slate-900/40 text-slate-200 hover:bg-slate-800/60")
-                            }
-                            onClick={() => toggleRtspEnabled(s.id, !s.enabled)}
-                            disabled={saving}
-                            title="Toggle enabled"
-                          >
-                            {s.enabled ? (
-                              <Power className="w-4 h-4" />
-                            ) : (
-                              <PowerOff className="w-4 h-4" />
-                            )}
-                            {s.enabled ? "On" : "Off"}
-                          </button>
-
-                          <button
-                            type="button"
-                            className={softBtn}
-                            onClick={() =>
-                              setRtspForm({
-                                id: s.id,
-                                name: s.name,
-                                url: s.url,
-                                enabled: s.enabled,
-                              })
-                            }
-                            title="Edit"
-                          >
-                            <Pencil className="w-4 h-4" /> Edit
-                          </button>
-
-                          <button
-                            type="button"
-                            className={
-                              "px-3 py-2 rounded-xl border border-rose-700/50 bg-rose-950/20 hover:bg-rose-950/35 " +
-                              "text-rose-200 text-sm flex items-center gap-2"
-                            }
-                            onClick={() => deleteRtspSource(s.id)}
-                            disabled={saving}
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4" /> Delete
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className={`rounded-2xl border ${BORDER} p-3 ${CARD_BG}`}>
-                <div
-                  className={`text-sm font-semibold ${TEXT} flex items-center gap-2`}
-                >
-                  <Plus className="w-4 h-4" />
-                  {rtspForm.id ? "Edit RTSP Source" : "Add RTSP Source"}
-                </div>
-
-                <div className="mt-3 space-y-3">
-                  <div>
-                    <label className={`text-xs ${MUTED2}`}>Name</label>
-                    <input
-                      className={inputCls}
-                      value={rtspForm.name}
-                      onChange={(e) =>
-                        setRtspForm((p) => ({ ...p, name: e.target.value }))
-                      }
-                      placeholder="e.g., Gate Camera 1"
-                    />
-                  </div>
-
-                  <div>
-                    <label className={`text-xs ${MUTED2}`}>RTSP URL</label>
-                    <input
-                      className={inputCls}
-                      value={rtspForm.url}
-                      onChange={(e) =>
-                        setRtspForm((p) => ({ ...p, url: e.target.value }))
-                      }
-                      placeholder="rtsp://username:password@ip:554/stream"
-                    />
-                    <div className={`mt-1 text-[11px] ${MUTED2}`}>
-                      Tip: Use <code className="text-slate-200">rtsp://</code>{" "}
-                      (or <code className="text-slate-200">rtsps://</code>).
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900/30 px-3 py-2">
-                    <div className="text-sm text-slate-200">Enabled</div>
-                    <label className="inline-flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4"
-                        checked={!!rtspForm.enabled}
-                        onChange={(e) =>
-                          setRtspForm((p) => ({
-                            ...p,
-                            enabled: e.target.checked,
-                          }))
-                        }
-                      />
-                      <span
-                        className={
-                          "text-xs px-2 py-0.5 rounded-full border " +
-                          (rtspForm.enabled
-                            ? "border-emerald-700 bg-emerald-900/15 text-emerald-200"
-                            : "border-slate-700 bg-slate-900/20 text-slate-300")
-                        }
-                      >
-                        {rtspForm.enabled ? "ON" : "OFF"}
-                      </span>
-                    </label>
-                  </div>
-
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      type="button"
-                      className={greenBtn}
-                      onClick={upsertRtspSource}
-                      disabled={saving}
-                    >
-                      <Save className="w-4 h-4" />
-                      {rtspForm.id ? "Update" : "Add"}
-                    </button>
-
-                    <button
-                      type="button"
-                      className={softBtn}
-                      onClick={resetRtspForm}
-                      disabled={saving}
-                    >
-                      <RefreshCw className="w-4 h-4" /> Clear
-                    </button>
-                  </div>
-
-                  <div className={`text-xs ${MUTED2}`}>
-                    After adding/enabling sources, your backend can use this list
-                    to decide which RTSP cameras appear or run in <b>Live View</b>.
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {tab === "roi" && isFisheye && (
-            <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
-              <div className={`rounded-2xl border ${BORDER} p-3 ${CARD_BG}`}>
-                <div className={`text-sm font-semibold ${TEXT} mb-2`}>
-                  Fisheye View Controls
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    className={
-                      "px-3 py-2 rounded-xl border text-sm " +
-                      (group === "A"
-                        ? "bg-slate-900 text-white border-slate-900"
-                        : "border-slate-700 bg-slate-900/40 hover:bg-slate-800/60 text-slate-100")
-                    }
-                    onClick={() => {
-                      const viewId = getFirstViewIdOfGroup("A");
-                      setGroup("A");
-                      setActiveViewIdx(viewId);
-                      setDraft([]);
-                      setActivePolyIdx(null);
-                    }}
-                  >
-                    Group A
-                  </button>
-
-                  <button
-                    type="button"
-                    className={
-                      "px-3 py-2 rounded-xl border text-sm " +
-                      (group === "B"
-                        ? "bg-slate-900 text-white border-slate-900"
-                        : "border-slate-700 bg-slate-900/40 hover:bg-slate-800/60 text-slate-100")
-                    }
-                    onClick={() => {
-                      const viewId = getFirstViewIdOfGroup("B");
-                      setGroup("B");
-                      setActiveViewIdx(viewId);
-                      setDraft([]);
-                      setActivePolyIdx(null);
-                    }}
-                  >
-                    Group B
-                  </button>
-
-                  <div className="w-px h-8 bg-slate-800 mx-1" />
-
-                  <div className="text-sm text-slate-200">
-                    Active view:{" "}
-                    <span className="font-semibold">
-                      {prettyViewName(activeViewName)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
-                  {Array.from({ length: 8 }, (_, viewId) => {
-                    const nm = getViewNameById(viewId);
-                    return (
-                      <button
-                        key={viewId}
-                        type="button"
-                        onClick={() => {
-                          setActiveViewIdx(viewId);
-                          setGroup(getGroupByViewId(viewId));
-                          setDraft([]);
-                          setActivePolyIdx(null);
-                        }}
-                        className={
-                          "px-3 py-2 rounded-xl border text-xs text-left " +
-                          (activeViewIdx === viewId
-                            ? "border-emerald-700 bg-emerald-900/15 text-emerald-100"
-                            : "border-slate-700 bg-slate-900/40 hover:bg-slate-800/60 text-slate-100")
-                        }
-                      >
-                        <div className="font-semibold">
-                          {viewId}. {nm}
-                        </div>
-                        <div className="text-[11px] text-slate-400">
-                          {prettyViewName(nm)}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className={`rounded-2xl border ${BORDER} p-3 ${CARD_BG}`}>
-                <div className="flex items-center justify-between">
-                  <div className={`text-sm font-semibold ${TEXT}`}>
-                    Group Preview
-                  </div>
-                  {mode === "live" && (
-                    <button
-                      type="button"
-                      onClick={refreshFrozen}
-                      className={softBtn}
-                      title="Refresh frozen preview"
-                    >
-                      <RefreshCw className="w-4 h-4" /> Refresh Frame
-                    </button>
-                  )}
-                </div>
-
-                <div className="mt-3 rounded-xl overflow-hidden border border-slate-800 bg-slate-900/60">
-                  {groupFrameUrl ? (
-                    <img
-                      src={groupFrameUrl}
-                      alt="Group frame"
-                      className="w-full h-auto block"
-                      draggable={false}
-                    />
-                  ) : (
-                    <div className="p-6 text-sm text-slate-400">No preview</div>
-                  )}
-                </div>
-
-                <div className={`mt-2 text-xs ${MUTED2}`}>
-                  {mode === "live"
-                    ? "Live settings uses frozen snapshots for stable ROI drawing."
-                    : "Offline preview uses current decoded frame (may change between requests)."}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {tab === "roi" && (
           <div
@@ -2509,6 +2577,73 @@ export default function LostAndFoundSettingsPage({
               >
                 <Save className="w-4 h-4" /> Save Notifications
               </button>
+            </div>
+          </div>
+        )}
+
+        {tab === "retention" && (
+          <div
+            className={`rounded-2xl border ${BORDER} ${CARD_BG} shadow-sm p-4`}
+          >
+            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+              <div>
+                <div className={`text-lg font-bold ${TEXT}`}>
+                  Event Data Retention
+                </div>
+                <div className={`text-sm ${MUTED} mt-1`}>
+                  Control how many days Lost &amp; Found event history is kept before old data is removed automatically.
+                </div>
+              </div>
+
+              <div className="w-full lg:w-[320px]">
+                <label className={`text-xs ${MUTED2}`}>Retention Days</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={3650}
+                  className={inputCls}
+                  value={Number(settings.data_retention_days ?? 90)}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      data_retention_days: clamp(
+                        Number(e.target.value || 90),
+                        1,
+                        3650
+                      ),
+                    }))
+                  }
+                />
+                <div className={`mt-2 text-xs ${MUTED2}`}>
+                  Default is <b>90 days</b>. Recommended range: 30 to 365 days.
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-4">
+                <div className={`text-sm font-semibold ${TEXT}`}>Current Policy</div>
+                <div className="mt-2 text-3xl font-bold text-white">
+                  {Number(settings.data_retention_days ?? 90)} days
+                </div>
+                <div className={`mt-2 text-xs ${MUTED2}`}>
+                  Old event records beyond this age will be pruned by the backend cleanup routine.
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-4">
+                <div className={`text-sm font-semibold ${TEXT}`}>What Gets Cleaned</div>
+                <div className={`mt-2 text-sm ${MUTED}`}>
+                  Stored event history, overrides for deleted/solved items, and older Lost &amp; Found event output files.
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-4">
+                <div className={`text-sm font-semibold ${TEXT}`}>When Applied</div>
+                <div className={`mt-2 text-sm ${MUTED}`}>
+                  The new retention policy is saved immediately after you press <b>Save Retention</b>, and backend cleanup can run without restarting the UI.
+                </div>
+              </div>
             </div>
           </div>
         )}
