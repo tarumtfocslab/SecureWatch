@@ -97,6 +97,7 @@ type OfflineVideoItem = {
 type LFSettings = {
   notifications_enabled: boolean;
   notifications_sound_enabled?: boolean;
+  data_retention_enabled?: boolean;
   data_retention_days?: number;
   cameras_enabled?: Record<string, boolean>;
 };
@@ -733,6 +734,7 @@ export default function LostAndFoundSettingsPage({
   const [settings, setSettings] = useState<LFSettings>({
     notifications_enabled: true,
     notifications_sound_enabled: false,
+    data_retention_enabled: true,
     data_retention_days: 90,
     cameras_enabled: {},
   });
@@ -1213,6 +1215,10 @@ export default function LostAndFoundSettingsPage({
             ...prev,
             notifications_enabled: !!(st as any)?.notifications_enabled,
             notifications_sound_enabled: !!(st as any)?.notifications_sound_enabled,
+            data_retention_enabled:
+              typeof (st as any)?.data_retention_enabled === "boolean"
+                ? !!(st as any)?.data_retention_enabled
+                : true,
             data_retention_days: clamp(
               Number((st as any)?.data_retention_days ?? 90) || 90,
               1,
@@ -1688,6 +1694,7 @@ export default function LostAndFoundSettingsPage({
       );
 
       const payload = {
+        data_retention_enabled: !!settings.data_retention_enabled,
         data_retention_days: days,
       };
 
@@ -1699,6 +1706,10 @@ export default function LostAndFoundSettingsPage({
           ...prev,
           notifications_enabled: !!(st as any)?.notifications_enabled,
           notifications_sound_enabled: !!(st as any)?.notifications_sound_enabled,
+          data_retention_enabled:
+            typeof (st as any)?.data_retention_enabled === "boolean"
+              ? !!(st as any)?.data_retention_enabled
+              : true,
           data_retention_days: clamp(
             Number((st as any)?.data_retention_days ?? 90) || 90,
             1,
@@ -1712,6 +1723,29 @@ export default function LostAndFoundSettingsPage({
       setMsg({ type: "ok", text: "Data retention saved." });
     } catch (e: any) {
       setMsg({ type: "err", text: `Save failed: ${String(e?.message || e)}` });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function clearAllEvents() {
+    const ok = window.confirm(
+      "Are you sure you want to permanently delete all Lost & Found events?"
+    );
+    if (!ok) return;
+
+    try {
+      setSaving(true);
+      setMsg(null);
+
+      await apiPost("/api/lostfound/events/clear_all", {});
+
+      setMsg({ type: "ok", text: "All events deleted successfully." });
+    } catch (e: any) {
+      setMsg({
+        type: "err",
+        text: `Delete all events failed: ${String(e?.message || e)}`,
+      });
     } finally {
       setSaving(false);
     }
@@ -2486,10 +2520,138 @@ export default function LostAndFoundSettingsPage({
             </div>
 
             <div className={`mb-4 text-xs ${MUTED2}`}>
-              Selected for ROI: <span className="text-slate-200 font-medium">{roiSelectedLabel}</span>
+              Selected for ROI:{" "}
+              <span className="text-slate-200 font-medium">{roiSelectedLabel}</span>
             </div>
 
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+            {tab === "roi" && isFisheye && (
+              <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
+                <div className={`rounded-2xl border ${BORDER} p-3 ${CARD_BG}`}>
+                  <div className={`text-sm font-semibold ${TEXT} mb-2`}>
+                    Fisheye View Controls
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className={
+                        "px-3 py-2 rounded-xl border text-sm " +
+                        (group === "A"
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "border-slate-700 bg-slate-900/40 hover:bg-slate-800/60 text-slate-100")
+                      }
+                      onClick={() => {
+                        const viewId = getFirstViewIdOfGroup("A");
+                        setGroup("A");
+                        setActiveViewIdx(viewId);
+                        setDraft([]);
+                        setActivePolyIdx(null);
+                      }}
+                    >
+                      Group A
+                    </button>
+
+                    <button
+                      type="button"
+                      className={
+                        "px-3 py-2 rounded-xl border text-sm " +
+                        (group === "B"
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "border-slate-700 bg-slate-900/40 hover:bg-slate-800/60 text-slate-100")
+                      }
+                      onClick={() => {
+                        const viewId = getFirstViewIdOfGroup("B");
+                        setGroup("B");
+                        setActiveViewIdx(viewId);
+                        setDraft([]);
+                        setActivePolyIdx(null);
+                      }}
+                    >
+                      Group B
+                    </button>
+
+                    <div className="w-px h-8 bg-slate-800 mx-1" />
+
+                    <div className="text-sm text-slate-200">
+                      Active view:{" "}
+                      <span className="font-semibold">
+                        {prettyViewName(activeViewName)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {Array.from({ length: 8 }, (_, viewId) => {
+                      const nm = getViewNameById(viewId);
+                      return (
+                        <button
+                          key={viewId}
+                          type="button"
+                          onClick={() => {
+                            setActiveViewIdx(viewId);
+                            setGroup(getGroupByViewId(viewId));
+                            setDraft([]);
+                            setActivePolyIdx(null);
+                          }}
+                          className={
+                            "px-3 py-2 rounded-xl border text-xs text-left " +
+                            (activeViewIdx === viewId
+                              ? "border-emerald-700 bg-emerald-900/15 text-emerald-100"
+                              : "border-slate-700 bg-slate-900/40 hover:bg-slate-800/60 text-slate-100")
+                          }
+                        >
+                          <div className="font-semibold">
+                            {viewId}. {nm}
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {prettyViewName(nm)}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className={`rounded-2xl border ${BORDER} p-3 ${CARD_BG}`}>
+                  <div className="flex items-center justify-between">
+                    <div className={`text-sm font-semibold ${TEXT}`}>
+                      Group Preview
+                    </div>
+                    {mode === "live" && (
+                      <button
+                        type="button"
+                        onClick={refreshFrozen}
+                        className={softBtn}
+                        title="Refresh frozen preview"
+                      >
+                        <RefreshCw className="w-4 h-4" /> Refresh Frame
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="mt-3 rounded-xl overflow-hidden border border-slate-800 bg-slate-900/60">
+                    {groupFrameUrl ? (
+                      <img
+                        src={groupFrameUrl}
+                        alt="Group frame"
+                        className="w-full h-auto block"
+                        draggable={false}
+                      />
+                    ) : (
+                      <div className="p-6 text-sm text-slate-400">No preview</div>
+                    )}
+                  </div>
+
+                  <div className={`mt-2 text-xs ${MUTED2}`}>
+                    {mode === "live"
+                      ? "Live settings uses frozen snapshots for stable ROI drawing."
+                      : "Offline preview uses current decoded frame (may change between requests)."}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 my-4">
               <div />
 
               <div className="flex items-center gap-2">
@@ -2514,7 +2676,7 @@ export default function LostAndFoundSettingsPage({
                 </button>
               </div>
             </div>
-            
+
             {!isFisheye && mode === "live" && (
               <div className={`mb-3 text-xs ${MUTED2} flex items-center gap-2`}>
                 <Info className="w-4 h-4" />
@@ -2537,18 +2699,10 @@ export default function LostAndFoundSettingsPage({
               onSelectPoly={(idx) => setActivePolyIdx(idx)}
               onDeletePoly={deletePoly}
               onClearAll={clearAll}
-              previewMaxWidth={
-                mode === "offline"
-                  ? 800
-                  : isFisheye
-                  ? 420
-                  : 900
-              }
+              previewMaxWidth={mode === "offline" ? 800 : isFisheye ? 420 : 900}
               hintTitle={
                 isFisheye
-                  ? `Drawing ROI for ${prettyViewName(
-                      activeViewName
-                    )} (fisheye view)`
+                  ? `Drawing ROI for ${prettyViewName(activeViewName)} (fisheye view)`
                   : "Drawing ROI for normal frame"
               }
             />
@@ -2658,64 +2812,152 @@ export default function LostAndFoundSettingsPage({
           <div
             className={`rounded-2xl border ${BORDER} ${CARD_BG} shadow-sm p-4`}
           >
-            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+            <div className="flex flex-col gap-5">
               <div>
                 <div className={`text-lg font-bold ${TEXT}`}>
-                  Event Data Retention
+                  Data Retention Settings
                 </div>
                 <div className={`text-sm ${MUTED} mt-1`}>
-                  Control how many days Lost &amp; Found event history is kept before old data is removed automatically.
+                  Control how long Lost &amp; Found events are kept in the system.
                 </div>
               </div>
 
-              <div className="w-full lg:w-[320px]">
-                <label className={`text-xs ${MUTED2}`}>Retention Days</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={3650}
-                  className={inputCls}
-                  value={Number(settings.data_retention_days ?? 90)}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      data_retention_days: clamp(
-                        Number(e.target.value || 90),
-                        1,
-                        3650
-                      ),
-                    }))
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className={`text-sm font-semibold ${TEXT}`}>
+                      Enable Data Retention
+                    </div>
+                    <div className={`text-xs ${MUTED2} mt-1`}>
+                      When enabled, old event records and evidence files will be
+                      removed automatically. When disabled, old data will remain
+                      unless manually deleted.
+                    </div>
+                  </div>
+
+                  <label className="inline-flex items-center gap-2 shrink-0">
+                    <input
+                      type="checkbox"
+                      className="w-4 h-4"
+                      checked={!!settings.data_retention_enabled}
+                      onChange={(e) =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          data_retention_enabled: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span
+                      className={
+                        "text-sm px-2 py-1 rounded-lg border " +
+                        (settings.data_retention_enabled
+                          ? "border-emerald-700 bg-emerald-900/15 text-emerald-200"
+                          : "border-slate-700 bg-slate-900/20 text-slate-300")
+                      }
+                    >
+                      {settings.data_retention_enabled ? "ON" : "OFF"}
+                    </span>
+                  </label>
+                </div>
+
+                <div
+                  className={
+                    "mt-4 rounded-xl border px-4 py-3 text-sm " +
+                    (settings.data_retention_enabled
+                      ? "border-amber-700/50 bg-amber-950/20 text-amber-200"
+                      : "border-slate-700 bg-slate-900/20 text-slate-300")
                   }
-                />
-                <div className={`mt-2 text-xs ${MUTED2}`}>
-                  Default is <b>90 days</b>. Recommended range: 30 to 365 days.
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-4">
-                <div className={`text-sm font-semibold ${TEXT}`}>Current Policy</div>
-                <div className="mt-2 text-3xl font-bold text-white">
-                  {Number(settings.data_retention_days ?? 90)} days
-                </div>
-                <div className={`mt-2 text-xs ${MUTED2}`}>
-                  Old event records beyond this age will be pruned by the backend cleanup routine.
+                >
+                  {settings.data_retention_enabled
+                    ? `Data retention is ON. Events older than ${Number(
+                        settings.data_retention_days ?? 90
+                      )} days will be deleted automatically.`
+                    : "Data retention is OFF. No automatic deletion will happen."}
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-4">
-                <div className={`text-sm font-semibold ${TEXT}`}>What Gets Cleaned</div>
-                <div className={`mt-2 text-sm ${MUTED}`}>
-                  Stored event history, overrides for deleted/solved items, and older Lost &amp; Found event output files.
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className={`text-sm font-semibold ${TEXT}`}>
+                      Event Retention Period
+                    </div>
+                    <div className={`text-xs ${MUTED2} mt-1`}>
+                      Event records, dashboard/report history, and evidence images
+                      older than this period will be removed automatically.
+                    </div>
+                  </div>
+
+                  <div className="text-white font-semibold text-sm shrink-0">
+                    {Number(settings.data_retention_days ?? 90)} days
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <input
+                    type="range"
+                    min={1}
+                    max={365}
+                    step={1}
+                    className="w-full"
+                    value={Number(settings.data_retention_days ?? 90)}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        data_retention_days: clamp(
+                          Number(e.target.value || 90),
+                          1,
+                          365
+                        ),
+                      }))
+                    }
+                    disabled={!settings.data_retention_enabled}
+                  />
+                  <div className={`mt-2 flex justify-between text-xs ${MUTED2}`}>
+                    <span>1 day</span>
+                    <span>365 days</span>
+                  </div>
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/30 p-4">
-                <div className={`text-sm font-semibold ${TEXT}`}>When Applied</div>
-                <div className={`mt-2 text-sm ${MUTED}`}>
-                  The new retention policy is saved immediately after you press <b>Save Retention</b>, and backend cleanup can run without restarting the UI.
+              <div className="rounded-2xl border border-amber-700/50 bg-amber-950/20 p-4">
+                <div className="text-amber-200 text-sm font-medium">
+                  ⚠ Data retention is applied across the Lost &amp; Found module,
+                  including Events, Dashboard, Reports, exports, and evidence files.
                 </div>
+              </div>
+
+              <div className="rounded-2xl border border-rose-700/50 bg-rose-950/20 p-4">
+                <div className={`text-sm font-semibold text-white`}>
+                  Clear All Events
+                </div>
+                <div className={`text-xs ${MUTED2} mt-1 mb-4`}>
+                  Permanently delete all Lost &amp; Found records and saved
+                  evidence images from the system.
+                </div>
+
+                <button
+                  type="button"
+                  onClick={clearAllEvents}
+                  disabled={saving}
+                  className={
+                    "px-4 py-2 rounded-xl border border-rose-700/50 bg-rose-600 hover:bg-rose-700 " +
+                    "text-white text-sm flex items-center gap-2"
+                  }
+                >
+                  <Trash2 className="w-4 h-4" /> Clear All Events
+                </button>
+              </div>
+
+              <div>
+                <button
+                  onClick={saveRetentionSettings}
+                  disabled={saving}
+                  className={primaryBtn}
+                  type="button"
+                >
+                  <Save className="w-4 h-4" /> Save Data Retention Settings
+                </button>
               </div>
             </div>
           </div>
