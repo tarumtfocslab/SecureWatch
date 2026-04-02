@@ -34,6 +34,11 @@ type LostFoundItem = {
   raw?: any;
 };
 
+type LostFoundRetentionSettings = {
+  data_retention_enabled?: boolean;
+  data_retention_days?: number;
+};
+
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
 }
@@ -48,6 +53,7 @@ function fmtTs(ts?: number) {
 function isLost(x: LostFoundItem) {
   return (x.status || "lost").toLowerCase().includes("lost");
 }
+
 function isSolved(x: LostFoundItem) {
   return (x.status || "").toLowerCase().includes("solv");
 }
@@ -55,6 +61,7 @@ function isSolved(x: LostFoundItem) {
 async function apiGetItems(signal?: AbortSignal): Promise<LostFoundItem[]> {
   const res = await fetch(buildApiUrl(LOSTFOUND_API_BASE, "/api/lostfound/items"), {
     signal,
+    cache: "no-store",
   });
   if (!res.ok) throw new Error("Failed to load items");
   const js = await res.json();
@@ -87,9 +94,32 @@ async function apiGetItems(signal?: AbortSignal): Promise<LostFoundItem[]> {
           : typeof it.last_seen_ts === "number"
           ? it.last_seen_ts
           : undefined,
+      updatedAt:
+        typeof it.updatedAt === "number"
+          ? it.updatedAt
+          : typeof it.updated_at === "number"
+          ? it.updated_at
+          : undefined,
       imageUrl: resolveLostFoundUrl(it.imageUrl || it.image_url || null),
       notes: it.notes ?? "",
+      raw: it,
     }));
+}
+
+async function apiGetRetentionSettings(): Promise<LostFoundRetentionSettings> {
+  const res = await fetch(
+    buildApiUrl(LOSTFOUND_API_BASE, "/api/lostfound/settings"),
+    { cache: "no-store" }
+  );
+  if (!res.ok) throw new Error("Failed to load retention settings");
+  const js = await res.json();
+  return {
+    data_retention_enabled:
+      typeof js?.data_retention_enabled === "boolean"
+        ? js.data_retention_enabled
+        : true,
+    data_retention_days: Number(js?.data_retention_days ?? 90) || 90,
+  };
 }
 
 async function apiSolve(itemId: string) {
@@ -227,6 +257,12 @@ export default function LostAndFoundEventsPage() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const [retentionSettings, setRetentionSettings] =
+    useState<LostFoundRetentionSettings>({
+      data_retention_enabled: true,
+      data_retention_days: 90,
+    });
+
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "lost" | "solved">(
     "all"
@@ -251,6 +287,24 @@ export default function LostAndFoundEventsPage() {
 
   const abortRef = useRef<AbortController | null>(null);
 
+  async function loadRetentionSettings() {
+    try {
+      const st = await apiGetRetentionSettings();
+      setRetentionSettings({
+        data_retention_enabled:
+          typeof st?.data_retention_enabled === "boolean"
+            ? st.data_retention_enabled
+            : true,
+        data_retention_days: Number(st?.data_retention_days ?? 90) || 90,
+      });
+    } catch {
+      setRetentionSettings({
+        data_retention_enabled: true,
+        data_retention_days: 90,
+      });
+    }
+  }
+
   async function load() {
     abortRef.current?.abort();
     const ac = new AbortController();
@@ -261,9 +315,11 @@ export default function LostAndFoundEventsPage() {
     try {
       const data = await apiGetItems(ac.signal);
       setItems(data);
+      await loadRetentionSettings();
     } catch (e: any) {
-      if (String(e?.name || "") !== "AbortError")
+      if (String(e?.name || "") !== "AbortError") {
         setErr(e?.message || "Failed to load");
+      }
     } finally {
       setLoading(false);
     }
@@ -282,19 +338,61 @@ export default function LostAndFoundEventsPage() {
 
   const labels = useMemo(() => {
     const s = new Set<string>();
-    for (const it of items) if (it.label) s.add(it.label);
+    for (const it of items) {
+      if (it.label) s.add(it.label);
+    }
     return ["all", ...Array.from(s).sort((a, b) => a.localeCompare(b))];
   }, [items]);
 
   const locations = useMemo(() => {
     const s = new Set<string>();
-    for (const it of items) if (it.location) s.add(it.location);
+    for (const it of items) {
+      if (it.location) s.add(it.location);
+    }
     return ["all", ...Array.from(s).sort((a, b) => a.localeCompare(b))];
   }, [items]);
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
+
+    const retentionEnabled =
+      typeof retentionSettings?.data_retention_enabled === "boolean"
+        ? retentionSettings.data_retention_enabled
+        : true;
+
+    const retentionDays = clamp(
+      Number(retentionSettings?.data_retention_days ?? 90) || 90,
+      1,
+      3650
+    );
+
+    const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+
     return items.filter((it) => {
+      if (retentionEnabled) {
+        const tsRaw =
+          it.lastSeenTs ??
+          it.firstSeenTs ??
+          it.updatedAt ??
+          (typeof it.raw?.lastSeenTs === "number"
+            ? it.raw.lastSeenTs
+            : undefined) ??
+          (typeof it.raw?.firstSeenTs === "number"
+            ? it.raw.firstSeenTs
+            : undefined) ??
+          (typeof it.raw?.updatedAt === "number"
+            ? it.raw.updatedAt
+            : undefined) ??
+          (typeof it.raw?.updated_at === "number"
+            ? it.raw.updated_at
+            : undefined);
+
+        if (typeof tsRaw === "number" && tsRaw > 0) {
+          const tsMs = tsRaw > 2_000_000_000_000 ? tsRaw : tsRaw * 1000;
+          if (tsMs < cutoffMs) return false;
+        }
+      }
+
       if (statusFilter === "lost" && !isLost(it)) return false;
       if (statusFilter === "solved" && !isSolved(it)) return false;
 
@@ -308,12 +406,16 @@ export default function LostAndFoundEventsPage() {
         }
       }
 
-      if (labelFilter !== "all" && (it.label || "") !== labelFilter)
+      if (labelFilter !== "all" && (it.label || "") !== labelFilter) {
         return false;
-      if (locationFilter !== "all" && (it.location || "") !== locationFilter)
+      }
+
+      if (locationFilter !== "all" && (it.location || "") !== locationFilter) {
         return false;
+      }
 
       if (!qq) return true;
+
       const hay = [
         it.id,
         it.label,
@@ -330,7 +432,15 @@ export default function LostAndFoundEventsPage() {
 
       return hay.includes(qq);
     });
-  }, [items, q, statusFilter, sourceFilter, labelFilter, locationFilter]);
+  }, [
+    items,
+    q,
+    statusFilter,
+    sourceFilter,
+    labelFilter,
+    locationFilter,
+    retentionSettings,
+  ]);
 
   const counts = useMemo(() => {
     const lost = filtered.filter(isLost).length;
@@ -516,10 +626,17 @@ export default function LostAndFoundEventsPage() {
             </select>
           </div>
 
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
             <Chip>{counts.total} items</Chip>
             <Chip tone="red">{counts.lost} lost</Chip>
             <Chip tone="green">{counts.solved} solved</Chip>
+
+            <Chip>
+              Retention:{" "}
+              {retentionSettings.data_retention_enabled === false
+                ? "OFF"
+                : `${Number(retentionSettings.data_retention_days ?? 90)} days`}
+            </Chip>
 
             <div className="flex-1" />
 
@@ -695,7 +812,9 @@ export default function LostAndFoundEventsPage() {
             <div className="text-xs text-slate-300 truncate">{imgUrl}</div>
             <div className="flex items-center gap-2 shrink-0">
               <button
-                onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))}
+                onClick={() =>
+                  setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))
+                }
                 className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 ring-1 ring-white/10 text-sm"
               >
                 −
@@ -704,7 +823,9 @@ export default function LostAndFoundEventsPage() {
                 {Math.round(zoom * 100)}%
               </div>
               <button
-                onClick={() => setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))}
+                onClick={() =>
+                  setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))
+                }
                 className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 ring-1 ring-white/10 text-sm"
               >
                 +
