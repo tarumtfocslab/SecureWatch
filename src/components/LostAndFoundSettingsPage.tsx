@@ -1734,6 +1734,24 @@ export default function LostAndFoundSettingsPage({
       : selectedCam?.name || liveCamId || "Live";
   }, [liveSourcesAll, liveCamId, selectedCam]);
 
+  const roiSelectedLabel = useMemo(() => {
+    if (mode === "live") {
+      const s = liveSourcesAll.find((x) => x.id === liveCamId) || null;
+      return s ? `[${s.kind.toUpperCase()}] ${s.name}` : liveCamId || "-";
+    }
+    const v = offlineVideos.find((x) => x.id === offlineStem) || null;
+    return v ? v.name : offlineStem || "-";
+  }, [mode, liveCamId, offlineStem, liveSourcesAll, offlineVideos]);
+
+  const dewarpSelectedLabel = useMemo(() => {
+    if (mode === "live") {
+      const s = liveSourcesAll.find((x) => x.id === liveCamId) || null;
+      return s ? `[${s.kind.toUpperCase()}] ${s.name}` : liveCamId || "-";
+    }
+    const v = offlineVideos.find((x) => x.id === offlineStem) || null;
+    return v ? v.name : offlineStem || "-";
+  }, [mode, liveCamId, offlineStem, liveSourcesAll, offlineVideos]);
+
   return (
     <div className={`min-h-screen ${PAGE_BG}`}>
       <div
@@ -2407,7 +2425,7 @@ export default function LostAndFoundSettingsPage({
           <div
             className={`rounded-2xl border ${BORDER} ${CARD_BG} shadow-sm p-4`}
           >
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+            <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-4">
               <div>
                 <div className={`text-lg font-bold ${TEXT}`}>
                   ROI Configuration
@@ -2418,6 +2436,61 @@ export default function LostAndFoundSettingsPage({
                     : "Offline ROI saved under outputs/lost_and_found/offline/<stem>/roi_config.json"}
                 </div>
               </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full lg:w-auto lg:min-w-[560px]">
+                <div>
+                  <label className={`text-xs ${MUTED2}`}>Mode</label>
+                  <select
+                    className={selectCls}
+                    value={mode}
+                    onChange={(e) => setMode(e.target.value as Mode)}
+                  >
+                    <option value="live">Live</option>
+                    <option value="offline">Offline</option>
+                  </select>
+                </div>
+
+                {mode === "live" ? (
+                  <div>
+                    <label className={`text-xs ${MUTED2}`}>Video / Camera</label>
+                    <select
+                      className={selectCls}
+                      value={liveCamId}
+                      onChange={(e) => setLiveCamId(e.target.value)}
+                    >
+                      {liveSourcesAll.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          [{c.kind.toUpperCase()}] {c.name} ({c.id})
+                          {c.enabled ? "" : " — DISABLED"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className={`text-xs ${MUTED2}`}>Video / Camera</label>
+                    <select
+                      className={selectCls}
+                      value={offlineStem}
+                      onChange={(e) => setOfflineStem(e.target.value)}
+                    >
+                      {offlineVideos.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} ({v.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className={`mb-4 text-xs ${MUTED2}`}>
+              Selected for ROI: <span className="text-slate-200 font-medium">{roiSelectedLabel}</span>
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+              <div />
 
               <div className="flex items-center gap-2">
                 {mode === "offline" && (
@@ -2441,7 +2514,7 @@ export default function LostAndFoundSettingsPage({
                 </button>
               </div>
             </div>
-
+            
             {!isFisheye && mode === "live" && (
               <div className={`mb-3 text-xs ${MUTED2} flex items-center gap-2`}>
                 <Info className="w-4 h-4" />
@@ -2648,16 +2721,71 @@ export default function LostAndFoundSettingsPage({
           </div>
         )}
 
-        {tab === "dewarp" && (
+                {tab === "dewarp" && (
           <div
             className={`rounded-2xl border ${BORDER} ${CARD_BG} shadow-sm p-4`}
           >
-            <div className={`text-lg font-bold ${TEXT} mb-1`}>
-              Fisheye Dewarp Calibration
+            <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-4">
+              <div>
+                <div className={`text-lg font-bold ${TEXT} mb-1`}>
+                  Fisheye Dewarp Calibration
+                </div>
+                <div className={`text-sm ${MUTED}`}>
+                  Adjust yaw/pitch/fov/rotate per fisheye source. Saved per
+                  camera/video and applied immediately.
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full lg:w-auto lg:min-w-[560px]">
+                <div>
+                  <label className={`text-xs ${MUTED2}`}>Mode</label>
+                  <select
+                    className={selectCls}
+                    value={mode}
+                    onChange={(e) => setMode(e.target.value as Mode)}
+                  >
+                    <option value="live">Live</option>
+                    <option value="offline">Offline</option>
+                  </select>
+                </div>
+
+                {mode === "live" ? (
+                  <div>
+                    <label className={`text-xs ${MUTED2}`}>Video / Camera</label>
+                    <select
+                      className={selectCls}
+                      value={liveCamId}
+                      onChange={(e) => setLiveCamId(e.target.value)}
+                    >
+                      {liveSourcesAll.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          [{c.kind.toUpperCase()}] {c.name} ({c.id})
+                          {c.enabled ? "" : " — DISABLED"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className={`text-xs ${MUTED2}`}>Video / Camera</label>
+                    <select
+                      className={selectCls}
+                      value={offlineStem}
+                      onChange={(e) => setOfflineStem(e.target.value)}
+                    >
+                      {offlineVideos.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} ({v.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className={`text-sm ${MUTED} mb-4`}>
-              Adjust yaw/pitch/fov/rotate per fisheye source. Saved per
-              camera/video and applied immediately.
+
+            <div className={`mb-4 text-xs ${MUTED2}`}>
+              Selected for Dewarp: <span className="text-slate-200 font-medium">{dewarpSelectedLabel}</span>
             </div>
 
             {!isFisheye ? (
