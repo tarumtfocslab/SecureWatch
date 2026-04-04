@@ -2,10 +2,10 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import path from 'path';
 
-const isCloudflarePages = process.env.CF_PAGES === '1';
+const appBase = process.env.APP_BASE || '/SecureWatch/';
 
 export default defineConfig({
-  base: isCloudflarePages ? '/' : '/SecureWatch/',
+  base: appBase,
   plugins: [react()],
   resolve: {
     extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
