@@ -5,11 +5,11 @@ import { ATTIRE_API_BASE } from "../api/base";
 export interface AttireViolation {
   id: string;
   imageUrl: string;
-  violationType: 'Sleeveless' | 'Shorts' | 'Slippers' ;
+  violationType: 'Sleeveless' | 'Shorts' | 'Slippers';
   status: 'Pending' | 'Resolved';
   location: string;
   detectionDate: Date;
-  source: 'Live Detection' | 'Uploaded Video' | 'RTSP Stream' | 'Webcam';
+  source: 'Uploaded Video' | 'Live RTSP' | 'Webcam';
   videoId?: string;
   view?: string;
   videoName?: string;
@@ -174,7 +174,7 @@ export function AttireComplianceEventsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+    useEffect(() => {
     let alive = true;
 
     async function load() {
@@ -196,12 +196,14 @@ export function AttireComplianceEventsPage() {
             if (v?.id) map[v.id] = v.name || v.id;
           });
         }
+
         // 1b) Load RTSP sources (id -> name)
         const resRtsp = await fetch(`${API_BASE}/api/rtsp/sources`);
+        let sources: any[] = [];
         if (resRtsp.ok) {
           const j = await resRtsp.json();
-          const sources = j.sources || [];
-          (Array.isArray(sources) ? sources : []).forEach((s: any) => {
+          sources = Array.isArray(j.sources) ? j.sources : [];
+          sources.forEach((s: any) => {
             if (s?.id) map[s.id] = s.name || s.id;
           });
         }
@@ -216,7 +218,7 @@ export function AttireComplianceEventsPage() {
         const uniqVideoIds = Array.from(
           new Set(
             (events || [])
-              .map(e => String(e.video_id || "").trim())
+              .map((e) => String(e.video_id || "").trim())
               .filter(Boolean)
           )
         );
@@ -232,9 +234,15 @@ export function AttireComplianceEventsPage() {
           })
         );
 
-        // 3) Map events -> UI
+        // 3) Build RTSP id set once
+        const rtspIdSet = new Set(
+          Array.isArray(sources)
+            ? sources.map((s: any) => String(s?.id || ""))
+            : []
+        );
+
+        // 4) Map events -> UI
         const mapped: AttireViolation[] = events.map((e) => {
-          // priority: id map -> backend video_name -> fallback
           const srcName =
             (e.video_id && map[e.video_id]) ||
             e.video_name ||
@@ -242,15 +250,27 @@ export function AttireComplianceEventsPage() {
             "Unknown Source";
 
           const vid = e.video_id || "";
+          const backendSource = String(e.source || "").trim();
 
           let sourceUi: AttireViolation["source"] = "Uploaded Video";
-          if (vid === "webcam") sourceUi = "Webcam";
-          else if (vid.startsWith("rtsp-")) sourceUi = "RTSP Stream";
-          else if ((e.source || "") === "Live Detection") sourceUi = "Live Detection";
-          else sourceUi = "Uploaded Video";
+
+          if (vid === "webcam" || backendSource === "Webcam" || backendSource === "Live Detection") {
+            sourceUi = "Webcam";
+          } else if (
+            backendSource === "Live RTSP" ||
+            backendSource === "RTSP Stream" ||
+            rtspIdSet.has(vid)
+          ) {
+            sourceUi = "Live RTSP";
+          } else {
+            sourceUi = "Uploaded Video";
+          }
+
           let viewKey = normalizeView(e.view);
           if (!viewKey && e.location && String(e.location).includes(",")) {
-            viewKey = normalizeView(String(e.location).split(",").slice(1).join(","));
+            viewKey = normalizeView(
+              String(e.location).split(",").slice(1).join(",")
+            );
           }
 
           const viewLabel =
@@ -269,7 +289,11 @@ export function AttireComplianceEventsPage() {
             detectionDate: new Date(((e.ts || 0) * 1000) || Date.now()),
             source: sourceUi,
             videoName: srcName,
-            notes: e.notes || (e.conf != null ? `conf=${Number(e.conf).toFixed(2)}` : undefined),
+            notes:
+              e.notes ||
+              (e.conf != null
+                ? `conf=${Number(e.conf).toFixed(2)}`
+                : undefined),
           };
         });
 
@@ -282,7 +306,9 @@ export function AttireComplianceEventsPage() {
     }
 
     load();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -411,8 +437,7 @@ export function AttireComplianceEventsPage() {
         <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-5">
           <div className="text-slate-400 text-[15px] mb-1">Detection Sources</div>
           <div className="text-white text-[15px] mt-1 leading-6">
-            Live: {violations.filter(v => v.source === 'Live Detection').length} |
-            RTSP: {violations.filter(v => v.source === 'RTSP Stream').length} |
+            Live RTSP: {violations.filter(v => v.source === 'Live RTSP').length} |
             Webcam: {violations.filter(v => v.source === 'Webcam').length} |
             Upload: {violations.filter(v => v.source === 'Uploaded Video').length}
           </div>
