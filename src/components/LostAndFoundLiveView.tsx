@@ -526,6 +526,81 @@ function MjpegStream({
   );
 }
 
+function CameraSelectorBar({
+  rows,
+  activeCamIds,
+  onToggle,
+}: {
+  rows: CamRow[];
+  activeCamIds: string[];
+  onToggle: (camId: string) => void;
+}) {
+  const activeSet = new Set(activeCamIds.map((x) => normalizeCamId(x)));
+
+  return (
+    <div className="sticky top-0 z-20 mb-5 rounded-2xl border border-slate-700/50 bg-slate-900/85 backdrop-blur p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-white font-semibold">Live View Camera Selector</div>
+          <div className="text-xs text-slate-400">
+            Select up to {MAX_ACTIVE_LIVE_STREAMS} cameras to display below
+          </div>
+        </div>
+
+        <div className="text-sm text-slate-300">
+          {activeCamIds.length} / {MAX_ACTIVE_LIVE_STREAMS} selected
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {rows.map((row) => {
+          const checked = activeSet.has(normalizeCamId(row.camId));
+          const disabled = !checked && activeCamIds.length >= MAX_ACTIVE_LIVE_STREAMS;
+
+          return (
+            <label
+              key={row.camId}
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border text-sm transition ${
+                checked
+                  ? "border-blue-500/40 bg-blue-500/10 text-blue-200"
+                  : disabled
+                  ? "border-slate-700/40 bg-slate-800/20 text-slate-500 cursor-not-allowed"
+                  : "border-slate-600/40 bg-slate-800/20 text-slate-200 hover:bg-slate-800/35 cursor-pointer"
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                disabled={disabled}
+                onChange={() => onToggle(row.camId)}
+                className="accent-blue-500"
+              />
+
+              <span>{row.meta?.name || row.camId}</span>
+
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                  row.fish
+                    ? "border-emerald-500/30 text-emerald-300 bg-emerald-500/10"
+                    : "border-slate-600/30 text-slate-300 bg-slate-700/20"
+                }`}
+              >
+                {row.fish ? "Fisheye" : "Normal"}
+              </span>
+
+              {!row.cam && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full border border-yellow-500/30 text-yellow-300 bg-yellow-500/10">
+                  No Live Data
+                </span>
+              )}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CameraCard({
   row,
   fisheyeOverride,
@@ -536,7 +611,6 @@ function CameraCard({
   aspectMap,
   setAspect,
   toggleOverride,
-  toggleActiveCamera,
   getStreamUrls,
   handleToggleDetection,
   handleRestartCamera,
@@ -550,7 +624,6 @@ function CameraCard({
   aspectMap: Record<string, number>;
   setAspect: (key: string, ratio: number) => void;
   toggleOverride: (camId: string) => void;
-  toggleActiveCamera: (camId: string) => void;
   getStreamUrls: (camId: string, meta?: SettingsCamera) => {
     normal: string;
     groupA: string;
@@ -614,19 +687,6 @@ function CameraCard({
           >
             {badgeText}
           </button>
-
-          {hasLive && (
-            <button
-              onClick={() => toggleActiveCamera(camId)}
-              className={`text-[10px] px-2 py-0.5 rounded-full border transition ${
-                isActiveStream
-                  ? "border-blue-500/40 text-blue-200 bg-blue-500/10 hover:bg-blue-500/20"
-                  : "border-slate-600/40 text-slate-300 bg-slate-800/20 hover:bg-slate-800/35"
-              }`}
-            >
-              {isActiveStream ? "Pause" : "Activate"}
-            </button>
-          )}
 
           {isUpdating && <span className="text-[10px] text-slate-400">updating...</span>}
 
@@ -707,7 +767,7 @@ function CameraCard({
               ) : (
                 <PausedPreview
                   label="Live stream paused"
-                  reason="Click Activate to move this card to the upper active section"
+                  reason="Tick this camera in the selector bar to display it"
                 />
               )}
             </div>
@@ -746,7 +806,7 @@ function CameraCard({
                 ) : (
                   <PausedPreview
                     label="Group A paused"
-                    reason="Click Activate to move this card to the upper active section"
+                    reason="Tick this camera in the selector bar to display it"
                   />
                 )}
               </div>
@@ -784,7 +844,7 @@ function CameraCard({
                 ) : (
                   <PausedPreview
                     label="Group B paused"
-                    reason="Click Activate to move this card to the upper active section"
+                    reason="Tick this camera in the selector bar to display it"
                   />
                 )}
               </div>
@@ -1325,11 +1385,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
 
   const activeFish = useMemo(() => rows.filter((r) => r.isActiveStream && r.fish), [rows]);
   const activeNormal = useMemo(() => rows.filter((r) => r.isActiveStream && !r.fish), [rows]);
-  const pausedFish = useMemo(() => rows.filter((r) => !r.isActiveStream && r.fish), [rows]);
-  const pausedNormal = useMemo(() => rows.filter((r) => !r.isActiveStream && !r.fish), [rows]);
-
   const activeRows = [...activeFish, ...activeNormal];
-  const pausedRows = [...pausedFish, ...pausedNormal];
 
   const liveCount = useMemo(() => rows.filter((x) => !!x.cam).length, [rows]);
 
@@ -1344,7 +1400,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
             Live source: <span className="text-slate-300">{API_BASE || "NOT CONFIGURED"}</span>
           </p>
           <p className="text-slate-500 text-xs mt-1">
-            Active cards stay on top. Paused cards move below. Fisheye cards are grouped first.
+            Use the selector bar to choose up to 4 cameras. Changes reflect immediately in the live view below.
           </p>
         </div>
 
@@ -1365,6 +1421,12 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
       ) : null}
 
       <div className="space-y-8">
+        <CameraSelectorBar
+          rows={rows}
+          activeCamIds={activeCamIds}
+          onToggle={toggleActiveCamera}
+        />
+
         <section>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-white font-semibold">Active Cameras</h2>
@@ -1375,7 +1437,7 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
 
           {activeRows.length === 0 ? (
             <div className="rounded-2xl border border-slate-700/50 bg-slate-900/40 p-6 text-slate-400 text-sm">
-              No active cameras. Click <span className="text-slate-200">Activate</span> on any card below.
+              No active cameras selected. Tick any camera name in the selector bar above.
             </div>
           ) : (
             <div className="grid grid-cols-1 2xl:grid-cols-2 gap-5 w-full">
@@ -1391,41 +1453,6 @@ export function LiveViewPage({ mode }: { mode: "lost-found" | "attire" }) {
                   aspectMap={aspectMap}
                   setAspect={setAspect}
                   toggleOverride={toggleOverride}
-                  toggleActiveCamera={toggleActiveCamera}
-                  getStreamUrls={getStreamUrls}
-                  handleToggleDetection={handleToggleDetection}
-                  handleRestartCamera={handleRestartCamera}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-white font-semibold">Paused Cameras</h2>
-            <div className="text-xs text-slate-400">{pausedRows.length} paused</div>
-          </div>
-
-          {pausedRows.length === 0 ? (
-            <div className="rounded-2xl border border-slate-700/50 bg-slate-900/40 p-6 text-slate-400 text-sm">
-              No paused cameras.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 2xl:grid-cols-2 gap-5 w-full">
-              {pausedRows.map((row) => (
-                <CameraCard
-                  key={row.camId}
-                  row={row}
-                  fisheyeOverride={fisheyeOverride}
-                  updatingDetection={updatingDetection}
-                  detectionConfig={detectionConfig}
-                  cameraStatus={cameraStatus}
-                  restartingCameras={restartingCameras}
-                  aspectMap={aspectMap}
-                  setAspect={setAspect}
-                  toggleOverride={toggleOverride}
-                  toggleActiveCamera={toggleActiveCamera}
                   getStreamUrls={getStreamUrls}
                   handleToggleDetection={handleToggleDetection}
                   handleRestartCamera={handleRestartCamera}
