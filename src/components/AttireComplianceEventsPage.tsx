@@ -329,6 +329,17 @@ export function AttireComplianceEventsPage() {
     setIsDraggingZoomedImage(false);
   }, [selectedViolation?.id]);
 
+  useEffect(() => {
+    if (!selectedViolation) return;
+
+    const prevBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+    };
+  }, [selectedViolation]);
+
   const filteredViolations = violations.filter(violation => {
     const matchesSearch = violation.violationType.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          violation.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -423,6 +434,7 @@ export function AttireComplianceEventsPage() {
 
   const handleModalImageWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     e.preventDefault();
+    e.stopPropagation();
 
     const delta = e.deltaY > 0 ? -0.2 : 0.2;
     const nextZoom = clampZoom(modalZoom + delta);
@@ -694,6 +706,7 @@ export function AttireComplianceEventsPage() {
                     width: "100%",
                     height: 260,
                     cursor: modalZoom > 1 ? (isDraggingZoomedImage ? "grabbing" : "grab") : "zoom-in",
+                    overscrollBehavior: "contain",
                   }}
                   onWheel={handleModalImageWheel}
                   onMouseDown={handleModalImageMouseDown}
