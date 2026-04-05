@@ -1,5 +1,5 @@
 // AttireComplianceEventsPage.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Search, Filter, MapPin, Calendar, Clock, CheckCircle, AlertCircle, Trash2, Edit2, X, AlertTriangle } from 'lucide-react';
 import { ATTIRE_API_BASE } from "../api/base";
 export interface AttireViolation {
@@ -174,7 +174,7 @@ export function AttireComplianceEventsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-    useEffect(() => {
+  useEffect(() => {
     let alive = true;
 
     async function load() {
@@ -317,6 +317,18 @@ export function AttireComplianceEventsPage() {
   const [selectedViolation, setSelectedViolation] = useState<AttireViolation | null>(null);
   const [editingViolation, setEditingViolation] = useState<AttireViolation | null>(null);
   
+  const [modalZoom, setModalZoom] = useState(1);
+  const [modalOffset, setModalOffset] = useState({ x: 0, y: 0 });
+  const [isDraggingZoomedImage, setIsDraggingZoomedImage] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const dragOriginRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    setModalZoom(1);
+    setModalOffset({ x: 0, y: 0 });
+    setIsDraggingZoomedImage(false);
+  }, [selectedViolation?.id]);
+
   const filteredViolations = violations.filter(violation => {
     const matchesSearch = violation.violationType.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          violation.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -406,6 +418,55 @@ export function AttireComplianceEventsPage() {
   const resolvedCount = violations.filter(v => v.status === 'Resolved').length;
 
   const [videoNameMap, setVideoNameMap] = useState<Record<string, string>>({});
+
+  const clampZoom = (z: number) => Math.max(1, Math.min(5, z));
+
+  const handleModalImageWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault();
+
+    const delta = e.deltaY > 0 ? -0.2 : 0.2;
+    const nextZoom = clampZoom(modalZoom + delta);
+
+    if (nextZoom === 1) {
+      setModalOffset({ x: 0, y: 0 });
+    }
+
+    setModalZoom(nextZoom);
+  };
+
+  const handleModalImageMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (modalZoom <= 1) return;
+
+    setIsDraggingZoomedImage(true);
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+    dragOriginRef.current = { ...modalOffset };
+  };
+
+  const handleModalImageMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDraggingZoomedImage || modalZoom <= 1) return;
+
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+
+    setModalOffset({
+      x: dragOriginRef.current.x + dx,
+      y: dragOriginRef.current.y + dy,
+    });
+  };
+
+  const handleModalImageMouseUp = () => {
+    setIsDraggingZoomedImage(false);
+  };
+
+  const handleModalImageMouseLeave = () => {
+    setIsDraggingZoomedImage(false);
+  };
+
+  const resetModalImageZoom = () => {
+    setModalZoom(1);
+    setModalOffset({ x: 0, y: 0 });
+    setIsDraggingZoomedImage(false);
+  };
 
   return (
     <div className="flex-1 p-6 overflow-y-auto text-[15px] [&_h3]:text-xl [&_h3]:font-semibold [&_h4]:text-lg [&_h4]:font-semibold [&_label]:text-sm">
@@ -613,23 +674,50 @@ export function AttireComplianceEventsPage() {
             {/* body scroll */}
             <div className="p-6 overflow-y-auto" style={{ minHeight: 0 }}>
               {/* ✅ image shown fully, never crop */}
-              <div
-                className="bg-black/20 rounded-lg overflow-hidden mb-5 flex items-center justify-center"
-                style={{ width: "100%", height: 200 }} // ✅ picture smaller
-              >
-                <img
-                  src={selectedViolation.imageUrl || "/placeholder.jpg"}
-                  onError={(e) => (e.currentTarget.src = "/placeholder.jpg")}
-                  alt={selectedViolation.violationType}
-                  draggable={false}
+              <div className="mb-5">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-slate-400 text-sm">
+                    Hover and scroll to zoom
+                  </span>
+                  <button
+                    type="button"
+                    onClick={resetModalImageZoom}
+                    className="text-xs px-3 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-white transition-colors"
+                  >
+                    Reset Zoom
+                  </button>
+                </div>
+
+                <div
+                  className="bg-black/20 rounded-lg overflow-hidden flex items-center justify-center select-none"
                   style={{
                     width: "100%",
-                    height: "100%",
-                    objectFit: "contain",   // ✅ FULL image
-                    objectPosition: "center",
-                    display: "block",
+                    height: 260,
+                    cursor: modalZoom > 1 ? (isDraggingZoomedImage ? "grabbing" : "grab") : "zoom-in",
                   }}
-                />
+                  onWheel={handleModalImageWheel}
+                  onMouseDown={handleModalImageMouseDown}
+                  onMouseMove={handleModalImageMouseMove}
+                  onMouseUp={handleModalImageMouseUp}
+                  onMouseLeave={handleModalImageMouseLeave}
+                >
+                  <img
+                    src={selectedViolation.imageUrl || "/placeholder.jpg"}
+                    onError={(e) => (e.currentTarget.src = "/placeholder.jpg")}
+                    alt={selectedViolation.violationType}
+                    draggable={false}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "contain",
+                      objectPosition: "center",
+                      display: "block",
+                      transform: `translate(${modalOffset.x}px, ${modalOffset.y}px) scale(${modalZoom})`,
+                      transformOrigin: "center center",
+                      transition: isDraggingZoomedImage ? "none" : "transform 0.12s ease-out",
+                    }}
+                  />
+                </div>
               </div>
 
               {/* details */}
