@@ -135,6 +135,27 @@ function PdfTooltip({ active, payload, label }: any) {
 }
 
 /* ================= SMALL UI COMPONENTS ================= */
+async function waitForImagesToLoad(container: HTMLElement) {
+  const images = Array.from(container.querySelectorAll("img"));
+
+  await Promise.all(
+    images.map((img) => {
+      return new Promise<void>((resolve) => {
+        if (img.complete && img.naturalWidth > 0) {
+          resolve();
+          return;
+        }
+
+        const done = () => resolve();
+
+        img.addEventListener("load", done, { once: true });
+        img.addEventListener("error", done, { once: true });
+
+        setTimeout(() => resolve(), 5000);
+      });
+    })
+  );
+}
 
 function StatCard({
   title,
@@ -1160,23 +1181,23 @@ function LostAndFoundReportsPageInner() {
                 <div className="h-[240px] bg-slate-100 flex items-center justify-center">
                   {it.imageUrl ? (
                     <img
-                      src={it.imageUrl}
-                      alt={it.label || "Evidence"}
-                      className="w-full h-full object-cover"
-                      crossOrigin="anonymous"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.style.display = "none";
-                        const parent = target.parentElement;
-                        if (parent && !parent.querySelector(".evidence-fallback")) {
-                          const fallback = document.createElement("div");
-                          fallback.className =
-                            "evidence-fallback text-slate-400 text-base";
-                          fallback.textContent = "Image unavailable";
-                          parent.appendChild(fallback);
-                        }
-                      }}
-                    />
+                    src={it.imageUrl}
+                    alt={it.label || "Evidence"}
+                    className="w-full h-full object-cover"
+                    crossOrigin="anonymous"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      target.style.display = "none";
+                      const parent = target.parentElement;
+                      if (parent && !parent.querySelector(".evidence-fallback")) {
+                        const fallback = document.createElement("div");
+                        fallback.className = "evidence-fallback text-slate-400 text-lg";
+                        fallback.textContent = "Image unavailable";
+                        parent.appendChild(fallback);
+                      }
+                    }}
+                  />
                   ) : (
                     <div className="text-slate-400 text-base">Image unavailable</div>
                   )}
