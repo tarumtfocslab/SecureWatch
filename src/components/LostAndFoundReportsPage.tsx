@@ -1237,12 +1237,12 @@ function LostAndFoundReportsPageInner() {
                   key={it.id}
                   className="rounded-2xl border border-slate-200 overflow-hidden bg-white"
                 >
-                  <div className="h-[240px] bg-slate-100 flex items-center justify-center">
+                  <div className="h-[280px] bg-slate-100 flex items-center justify-center p-2">
                     {pdfImageSrc ? (
                       <img
                         src={pdfImageSrc}
                         alt={it.label || "Evidence"}
-                        className="w-full h-full object-cover"
+                        className="max-w-full max-h-full object-contain rounded-lg"
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
                           target.style.display = "none";
