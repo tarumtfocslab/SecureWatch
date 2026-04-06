@@ -66,22 +66,13 @@ export function EventsPage() {
 
       {/* Module Header */}
       <div className="px-6 pt-4">
-        {activeModule === 'lost-found' ? (
+        {activeModule === 'lost-found' && (
           <>
             <h1 className="text-2xl font-semibold text-white">
               Lost & Found Events
             </h1>
             <p className="text-sm text-slate-400 mt-1">
               This page displays detected unattended items and their tracking status from CCTV surveillance.
-            </p>
-          </>
-        ) : (
-          <>
-            <h1 className="text-2xl font-semibold text-white">
-              Attire Compliance Events
-            </h1>
-            <p className="text-sm text-slate-400 mt-1">
-              This page shows detected attire violations based on compliance rules from real-time monitoring.
             </p>
           </>
         )}

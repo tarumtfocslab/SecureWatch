@@ -249,6 +249,18 @@ export function LostFoundDashboard({
 
   return (
     <>
+      {/* Dashboard Header */}
+      {!isFullscreen && (
+        <div className="px-0">
+          <h1 className="text-2xl font-semibold text-white">
+            Lost & Found Dashboard
+          </h1>
+          <p className="text-sm text-slate-400 mt-1">
+            This dashboard monitors unattended items detected from CCTV cameras and manages alert events in real time.
+          </p>
+        </div>
+      )}
+
       {!isFullscreen && (
         <div className="mt-4 bg-slate-900/40 border border-slate-800 rounded-2xl p-4">
           <div className="flex flex-col gap-4">
