@@ -1481,10 +1481,41 @@ export function AttireComplianceSettingsPage() {
                       <input
                         value={rtspUrl}
                         onChange={(e) => setRtspUrl(e.target.value)}
-                        placeholder="rtsp://user:pass@ip:554/stream"
+                        placeholder="rtsp://admin:password@ip:554/Streaming/Channels/102/"
                         className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-white text-[15px]"
                         disabled={rtspSaving}
                       />
+
+                      <div className="mt-2 rounded-lg border border-slate-700 bg-slate-900/60 px-3 py-3 text-xs text-slate-400 space-y-2">
+                        <div>
+                          <span className="text-slate-300 font-medium">Format:</span>
+                          <div className="mt-1 font-mono text-[12px] text-slate-300 break-all">
+                            rtsp://username:password@ip:port/Streaming/Channels/{"{channel}"}/
+                          </div>
+                        </div>
+
+                        <div>
+                          <span className="text-slate-300 font-medium">Notes:</span>
+                          <ul className="mt-1 list-disc pl-5 space-y-1">
+                            <li>Use Channel 102 for smoother real-time performance.</li>
+                            <li>Channel 101 is higher definition but heavier to process.</li>
+                            <li>If password contains '@', replace it with '%40'.</li>
+                          </ul>
+                        </div>
+
+                        <div>
+                          <span className="text-slate-300 font-medium">Example:</span>
+                          <div className="mt-1 font-mono text-[12px] text-slate-300 break-all">
+                            rtsp://admin:cctv%402268@10.123.41.192:554/Streaming/Channels/102/
+                          </div>
+                        </div>
+                      </div>
+
+                      {rtspUrl.includes("@") && !rtspUrl.includes("%40") && (
+                        <div className="mt-2 text-xs text-yellow-400">
+                          ⚠️ If your password contains '@', encode it as '%40'.
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-end justify-end gap-2 shrink-0 md:pb-[1px]">
