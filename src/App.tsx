@@ -805,6 +805,13 @@ export default function App() {
                     onRecordingToggle={handleRecordingToggle}
                     onDismissAlert={handleDismissAlert}
                     onStatusChange={handleLfStatusChange}
+                    onOpenEvents={(alert) => {
+                      setCurrentPage("events");
+                      localStorage.setItem("nav:lastPage", "events");
+
+                      // optional: keep selected camera for later usage
+                      setSelectedCamera(alert.cameraId);
+                    }}
                     isFullscreen={isGridFullscreen}
                     onToggleFullscreen={handleGridFullscreen}
                   />
