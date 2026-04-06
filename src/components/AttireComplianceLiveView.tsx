@@ -259,7 +259,7 @@ type TileProps = {
   streamReload: Record<string, number>;
   camDetections: Record<string, Detection[]>;
   videoFps: Record<string, { stream_fps: number; detect_fps: number }>;
-  viewModes: Record<string, ViewMode>;
+  viewModes: Record<string, ViewModeState>;
   modeSavingMap: Record<string, boolean>;
   onReload: (id: string) => void;
   onChangeViewMode: (id: string, mode: ViewMode) => void;
