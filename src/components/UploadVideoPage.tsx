@@ -669,8 +669,17 @@ export function UploadVideoPage({
   return (
     <main className="flex-1 p-6 overflow-y-auto">
       <div className="mb-6">
-        <h2 className="text-white mb-1">Upload Video</h2>
-        <p className="text-slate-400">Upload offline CCTV footage for analysis</p>
+        <h2 className="text-3xl font-bold text-white tracking-tight mb-2">
+          {mode === "lost-found"
+            ? "Lost & Found Offline Video Upload"
+            : "Attire Compliance Video Upload"}
+        </h2>
+
+        <p className="text-sm text-slate-400 max-w-2xl">
+          {mode === "lost-found"
+            ? "Upload recorded CCTV footage for unattended item detection, ROI setup, and offline lost-and-found analysis."
+            : "Upload offline CCTV footage for attire compliance analysis and review."}
+        </p>
       </div>
 
       <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-4 mb-6">
