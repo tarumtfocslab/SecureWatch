@@ -1237,12 +1237,12 @@ function LostAndFoundReportsPageInner() {
                   key={it.id}
                   className="rounded-2xl border border-slate-200 overflow-hidden bg-white"
                 >
-                  <div className="h-[280px] bg-slate-100 flex items-center justify-center p-2">
+                  <div className="h-[380px] bg-slate-100 flex items-center justify-center p-3">
                     {pdfImageSrc ? (
                       <img
                         src={pdfImageSrc}
                         alt={it.label || "Evidence"}
-                        className="max-w-full max-h-full object-contain rounded-lg"
+                        className="h-full w-auto max-w-full object-contain rounded-lg"
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
                           target.style.display = "none";
@@ -1259,7 +1259,6 @@ function LostAndFoundReportsPageInner() {
                       <div className="text-slate-400 text-base">Image unavailable</div>
                     )}
                   </div>
-
                   <div className="p-4">
                     <div className="font-semibold text-slate-900 text-lg">
                       {it.label || "-"}
