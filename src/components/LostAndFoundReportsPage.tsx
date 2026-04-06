@@ -1,5 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Download, FileDown, Image as ImageIcon } from "lucide-react";
+import {
+  RefreshCw,
+  Download,
+  FileDown,
+  Image as ImageIcon,
+  FileSpreadsheet,
+} from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -11,7 +17,6 @@ import {
   LineChart,
   Line,
 } from "recharts";
-
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import {
@@ -41,23 +46,25 @@ function fmtTs(ts?: number) {
   return new Date(ms).toLocaleString();
 }
 
+function fmtCsvTs(ts?: number) {
+  if (!ts) return "";
+  const ms = ts > 2_000_000_000_000 ? ts : ts * 1000;
+  const d = new Date(ms);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+}
+
 function isLost(x: LostFoundItem) {
   return (x.status || "").toLowerCase().includes("lost");
 }
 
 function isSolved(x: LostFoundItem) {
   return (x.status || "").toLowerCase().includes("solv");
-}
-
-function downloadBlob(filename: string, data: Blob) {
-  const url = URL.createObjectURL(data);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 function safeText(v: unknown, fallback = "-") {
@@ -71,9 +78,50 @@ function ellipsis(v: unknown, max = 24) {
   return `${s.slice(0, max - 1)}…`;
 }
 
+function durationSeconds(first?: number, last?: number) {
+  if (!first || !last) return "";
+  const firstMs = first > 2_000_000_000_000 ? first : first * 1000;
+  const lastMs = last > 2_000_000_000_000 ? last : last * 1000;
+  return Math.max(0, Math.round((lastMs - firstMs) / 1000));
+}
+
 function getNowFilenamePart() {
   return new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 }
+
+function formatLocationLabel(name: string) {
+  return String(name || "").replace(/_/g, " ");
+}
+
+function downloadBlob(filename: string, data: Blob) {
+  const url = URL.createObjectURL(data);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function loadImageAsDataUrl(src: string): Promise<string | null> {
+  try {
+    const res = await fetch(src, { mode: "cors" });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+
+    return await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/* ================= TOOLTIP ================= */
 
 function NiceTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
@@ -181,7 +229,7 @@ function PdfStatCard({
 
 function PdfChartCard({
   title,
-  height = 360,
+  height = 260,
   children,
 }: {
   title: string;
@@ -189,7 +237,7 @@ function PdfChartCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 break-inside-avoid">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
       <div className="mb-4 flex items-center justify-between">
         <div className="font-semibold text-slate-900">{title}</div>
         <div className="text-xs text-slate-500">Auto-generated</div>
@@ -209,16 +257,15 @@ function LostAndFoundReportsPageInner() {
   const [loading, setLoading] = useState(false);
 
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "lost" | "solved">(
-    "all"
-  );
+  const [statusFilter, setStatusFilter] = useState<"all" | "lost" | "solved">("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
 
   const abortRef = useRef<AbortController | null>(null);
 
   const chartsRef = useRef<HTMLDivElement | null>(null);
 
-  // hidden PDF-only layout refs
+  // Hidden export layouts
+  const pngChartsRef = useRef<HTMLDivElement | null>(null);
   const pdfPage1Ref = useRef<HTMLDivElement | null>(null);
   const pdfChartsRef = useRef<HTMLDivElement | null>(null);
 
@@ -267,7 +314,7 @@ function LostAndFoundReportsPageInner() {
 
       setItems(safe);
     } catch {
-      // ignore abort and fetch failures silently like your original version
+      // ignore
     } finally {
       setLoading(false);
     }
@@ -363,15 +410,26 @@ function LostAndFoundReportsPageInner() {
     return [...dailyTrend].sort((a, b) => b.count - a.count)[0];
   }, [dailyTrend]);
 
+  const latestEvidenceItems = useMemo(() => {
+    return filtered
+      .filter((it) => !!it.imageUrl)
+      .slice(0, 6);
+  }, [filtered]);
+
+  /* ================= CSV ================= */
+
   function exportCSV() {
+    const generatedAt = new Date().toLocaleString();
+
     const headers = [
-      "ID",
-      "Label",
+      "Event ID",
+      "Item Label",
       "Location",
-      "Source",
+      "Source Type",
       "Status",
       "First Seen",
       "Last Seen",
+      "Duration (sec)",
       "Image URL",
     ];
 
@@ -379,31 +437,81 @@ function LostAndFoundReportsPageInner() {
       it.id,
       it.label || "",
       it.location || "",
-      it.source || "",
-      isLost(it) ? "lost" : isSolved(it) ? "solved" : (it.status || ""),
-      fmtTs(it.firstSeenTs),
-      fmtTs(it.lastSeenTs),
+      (it.source || "").toUpperCase(),
+      isLost(it) ? "LOST" : isSolved(it) ? "SOLVED" : (it.status || "").toUpperCase(),
+      fmtCsvTs(it.firstSeenTs),
+      fmtCsvTs(it.lastSeenTs),
+      durationSeconds(it.firstSeenTs, it.lastSeenTs),
       it.imageUrl || "",
     ]);
 
-    const csv = [
+    const metaRows = [
+      ["Report Generated", generatedAt],
+      ["Module", "Lost & Found"],
+      ["Total Records", String(filtered.length)],
+      ["Status Filter", statusFilter],
+      ["Source Filter", sourceFilter],
+      ["Search Query", q || "-"],
+      [],
+    ];
+
+    const csvLines = [
+      ...metaRows.map((row) => row.join(",")),
       headers.join(","),
       ...rows.map((r) =>
         r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")
       ),
-    ].join("\n");
+    ];
 
+    const csv = csvLines.join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     downloadBlob(`lost_found_report_${getNowFilenamePart()}.csv`, blob);
   }
 
-  async function exportPNGCharts() {
-    if (!chartsRef.current) return;
+  function exportSummaryCSV() {
+    const headers = ["Category", "Value"];
+    const rows = [
+      ["Total Items", summary.total],
+      ["Lost", summary.lost],
+      ["Solved", summary.solved],
+      ["Solve Rate (%)", summary.rate],
+      ["Top Item", topItem],
+      ["Top Location", topLocation],
+      ["Peak Day", peakDay?.day || "-"],
+    ];
 
-    const canvas = await html2canvas(chartsRef.current, {
+    const itemRows = itemDistribution.map((x) => [`Item: ${x.name}`, x.count]);
+    const locRows = locationDistribution.map((x) => [`Location: ${x.name}`, x.count]);
+
+    const csv = [
+      "Report Generated," + new Date().toLocaleString(),
+      "Module,Lost & Found",
+      "",
+      headers.join(","),
+      ...rows.map((r) => r.map((v) => `"${String(v)}"`).join(",")),
+      "",
+      "Item Distribution,Count",
+      ...itemRows.map((r) => r.map((v) => `"${String(v)}"`).join(",")),
+      "",
+      "Location Distribution,Count",
+      ...locRows.map((r) => r.map((v) => `"${String(v)}"`).join(",")),
+    ].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    downloadBlob(`lost_found_summary_${getNowFilenamePart()}.csv`, blob);
+  }
+
+  /* ================= PNG ================= */
+
+  async function exportPNGCharts() {
+    if (!pngChartsRef.current) return;
+
+    const canvas = await html2canvas(pngChartsRef.current, {
       scale: 2,
-      backgroundColor: "#0b1220",
+      backgroundColor: "#ffffff",
       useCORS: true,
+      windowWidth: pngChartsRef.current.scrollWidth,
+      windowHeight: pngChartsRef.current.scrollHeight,
     });
 
     canvas.toBlob((blob) => {
@@ -412,15 +520,18 @@ function LostAndFoundReportsPageInner() {
     }, "image/png");
   }
 
+  /* ================= PDF ================= */
+
   async function exportPDFReport() {
     if (!pdfPage1Ref.current || !pdfChartsRef.current) return;
 
     const pdf = new jsPDF("p", "mm", "a4");
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const margin = 10;
 
-    // ---------- PAGE 1: cover / summary ----------
+    const pW = pdf.internal.pageSize.getWidth();
+    const pH = pdf.internal.pageSize.getHeight();
+    const margin = 8;
+
+    // -------- Page 1 summary (portrait)
     const coverCanvas = await html2canvas(pdfPage1Ref.current, {
       scale: 2,
       backgroundColor: "#ffffff",
@@ -430,12 +541,11 @@ function LostAndFoundReportsPageInner() {
     });
 
     const coverImg = coverCanvas.toDataURL("image/png");
-    const coverW = pageW - margin * 2;
+    const coverW = pW - margin * 2;
     const coverH = (coverCanvas.height * coverW) / coverCanvas.width;
+    pdf.addImage(coverImg, "PNG", margin, 8, coverW, Math.min(coverH, pH - 16));
 
-    pdf.addImage(coverImg, "PNG", margin, 8, coverW, Math.min(coverH, pageH - 16));
-
-    // ---------- PAGE 2: charts ----------
+    // -------- Page 2 charts (portrait)
     const chartsCanvas = await html2canvas(pdfChartsRef.current, {
       scale: 2,
       backgroundColor: "#ffffff",
@@ -445,54 +555,72 @@ function LostAndFoundReportsPageInner() {
     });
 
     const chartsImg = chartsCanvas.toDataURL("image/png");
-    const chartsW = pageW - margin * 2;
+    const chartsW = pW - margin * 2;
     const chartsH = (chartsCanvas.height * chartsW) / chartsCanvas.width;
+    pdf.addPage("a4", "p");
+    pdf.addImage(chartsImg, "PNG", margin, 8, chartsW, Math.min(chartsH, pH - 16));
 
-    pdf.addPage();
-    pdf.addImage(chartsImg, "PNG", margin, 8, chartsW, Math.min(chartsH, pageH - 16));
+    // -------- Detailed table (landscape)
+    pdf.addPage("a4", "l");
 
-    // ---------- PAGE 3+: table ----------
-    pdf.addPage();
+    let tablePage = 3;
+    const lW = pdf.internal.pageSize.getWidth();
+    const lH = pdf.internal.pageSize.getHeight();
 
-    let rowY = 16;
+    let rowY = 18;
 
-    const drawTableHeader = () => {
+    const drawLandscapeHeader = () => {
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(15);
+      pdf.setTextColor(20, 30, 50);
+      pdf.text("Detailed Event Records", 10, 12);
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(8);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text(`Generated: ${new Date().toLocaleString()}`, lW - 10, 12, { align: "right" });
+
       pdf.setFillColor(241, 245, 249);
-      pdf.rect(8, rowY - 5, 194, 8, "F");
+      pdf.rect(8, rowY - 5, lW - 16, 8, "F");
 
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(8.5);
       pdf.setTextColor(30, 41, 59);
 
       pdf.text("Item", 10, rowY);
-      pdf.text("Location", 42, rowY);
-      pdf.text("Source", 95, rowY);
-      pdf.text("Status", 118, rowY);
-      pdf.text("First Seen", 138, rowY);
-      pdf.text("Last Seen", 170, rowY);
+      pdf.text("Location", 55, rowY);
+      pdf.text("Source", 120, rowY);
+      pdf.text("Status", 150, rowY);
+      pdf.text("First Seen", 180, rowY);
+      pdf.text("Last Seen", 225, rowY);
 
       rowY += 8;
       pdf.setFont("helvetica", "normal");
     };
 
-    const drawFooter = (pageNo: number) => {
+    const drawLandscapeFooter = (pageNo: number) => {
+      pdf.setDrawColor(230, 235, 241);
+      pdf.line(8, lH - 10, lW - 8, lH - 10);
       pdf.setFontSize(8);
       pdf.setTextColor(100, 116, 139);
-      pdf.text(`SecureWatch Pro v2.0`, 10, 292);
-      pdf.text(`Page ${pageNo}`, 190, 292, { align: "right" });
+      pdf.text("SecureWatch Pro v2.0", 10, lH - 5);
+      pdf.text(`Page ${pageNo}`, lW - 10, lH - 5, { align: "right" });
     };
 
-    drawTableHeader();
+    drawLandscapeHeader();
 
-    let pageNo = 3;
+    filtered.forEach((it, idx) => {
+      if (rowY > lH - 18) {
+        drawLandscapeFooter(tablePage);
+        tablePage += 1;
+        pdf.addPage("a4", "l");
+        rowY = 18;
+        drawLandscapeHeader();
+      }
 
-    filtered.forEach((it) => {
-      if (rowY > 282) {
-        drawFooter(pageNo);
-        pageNo += 1;
-        pdf.addPage();
-        rowY = 16;
-        drawTableHeader();
+      if (idx % 2 === 0) {
+        pdf.setFillColor(250, 251, 253);
+        pdf.rect(8, rowY - 4.5, lW - 16, 6.5, "F");
       }
 
       const statusText =
@@ -500,26 +628,88 @@ function LostAndFoundReportsPageInner() {
 
       pdf.setFontSize(8);
       pdf.setTextColor(40, 40, 40);
-
-      pdf.text(ellipsis(it.label, 18), 10, rowY);
-      pdf.text(ellipsis(it.location, 28), 42, rowY);
-      pdf.text(ellipsis((it.source || "").toUpperCase(), 10), 95, rowY);
+      pdf.text(ellipsis(it.label, 22), 10, rowY);
+      pdf.text(ellipsis(it.location, 34), 55, rowY);
+      pdf.text(ellipsis((it.source || "").toUpperCase(), 12), 120, rowY);
 
       if (statusText === "lost") pdf.setTextColor(220, 38, 38);
       else pdf.setTextColor(5, 150, 105);
-      pdf.text(statusText, 118, rowY);
+      pdf.text(statusText, 150, rowY);
 
       pdf.setTextColor(40, 40, 40);
-      pdf.text(ellipsis(fmtTs(it.firstSeenTs), 18), 138, rowY);
-      pdf.text(ellipsis(fmtTs(it.lastSeenTs), 18), 170, rowY);
+      pdf.text(ellipsis(fmtTs(it.firstSeenTs), 24), 180, rowY);
+      pdf.text(ellipsis(fmtTs(it.lastSeenTs), 24), 225, rowY);
 
       rowY += 6.5;
     });
 
-    drawFooter(pageNo);
+    drawLandscapeFooter(tablePage);
 
-    const filename = `lost_found_report_${getNowFilenamePart()}.pdf`;
-    pdf.save(filename);
+    // -------- Evidence page with pictures
+    if (latestEvidenceItems.length > 0) {
+      pdf.addPage("a4", "p");
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(16);
+      pdf.setTextColor(20, 30, 50);
+      pdf.text("Latest Evidence Snapshots", 10, 14);
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text("Recent item images for quick review", 10, 20);
+
+      const imageDataList = await Promise.all(
+        latestEvidenceItems.map(async (it) => ({
+          item: it,
+          dataUrl: it.imageUrl ? await loadImageAsDataUrl(it.imageUrl) : null,
+        }))
+      );
+
+      const cardW = 88;
+      const cardH = 75;
+      const startX = 10;
+      const startY = 28;
+      const gapX = 10;
+      const gapY = 10;
+
+      imageDataList.forEach((entry, i) => {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        const x = startX + col * (cardW + gapX);
+        const y = startY + row * (cardH + gapY);
+
+        pdf.setDrawColor(220, 226, 232);
+        pdf.roundedRect(x, y, cardW, cardH, 3, 3);
+
+        if (entry.dataUrl) {
+          try {
+            pdf.addImage(entry.dataUrl, "JPEG", x + 3, y + 3, cardW - 6, 38);
+          } catch {
+            pdf.setFontSize(9);
+            pdf.setTextColor(150, 150, 150);
+            pdf.text("Image unavailable", x + cardW / 2, y + 22, { align: "center" });
+          }
+        } else {
+          pdf.setFontSize(9);
+          pdf.setTextColor(150, 150, 150);
+          pdf.text("Image unavailable", x + cardW / 2, y + 22, { align: "center" });
+        }
+
+        pdf.setTextColor(30, 41, 59);
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(9);
+        pdf.text(ellipsis(entry.item.label, 20), x + 3, y + 48);
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8);
+        pdf.text(`Location: ${ellipsis(entry.item.location, 22)}`, x + 3, y + 54);
+        pdf.text(`Source: ${ellipsis((entry.item.source || "").toUpperCase(), 10)}`, x + 3, y + 60);
+        pdf.text(`Seen: ${ellipsis(fmtTs(entry.item.lastSeenTs), 22)}`, x + 3, y + 66);
+      });
+    }
+
+    pdf.save(`lost_found_report_${getNowFilenamePart()}.pdf`);
   }
 
   return (
@@ -547,10 +737,19 @@ function LostAndFoundReportsPageInner() {
             <button
               onClick={exportCSV}
               className="px-3 py-2 bg-sky-600/90 hover:bg-sky-600 rounded-xl flex items-center gap-2 ring-1 ring-sky-400/30"
-              title="Export CSV"
+              title="Export detailed CSV"
             >
               <Download size={16} />
               Export CSV
+            </button>
+
+            <button
+              onClick={exportSummaryCSV}
+              className="px-3 py-2 bg-indigo-600/90 hover:bg-indigo-600 rounded-xl flex items-center gap-2 ring-1 ring-indigo-400/30"
+              title="Export summary CSV"
+            >
+              <FileSpreadsheet size={16} />
+              Export Summary CSV
             </button>
 
             <button
@@ -638,7 +837,7 @@ function LostAndFoundReportsPageInner() {
         </div>
 
         <div ref={chartsRef} className="grid grid-cols-1 xl:grid-cols-3 gap-10 mb-12">
-          <ChartCard title="Item Distribution" height={440}>
+          <ChartCard title="Item Distribution" height={420}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={itemDistribution} margin={{ top: 10, right: 18, left: 0, bottom: 35 }}>
                 <CartesianGrid stroke="#334155" strokeDasharray="3 3" />
@@ -657,12 +856,9 @@ function LostAndFoundReportsPageInner() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Location Distribution" height={440}>
+          <ChartCard title="Location Distribution" height={420}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={locationDistribution}
-                margin={{ top: 10, right: 18, left: 0, bottom: 35 }}
-              >
+              <BarChart data={locationDistribution} margin={{ top: 10, right: 18, left: 0, bottom: 35 }}>
                 <CartesianGrid stroke="#334155" strokeDasharray="3 3" />
                 <XAxis
                   dataKey="name"
@@ -671,6 +867,7 @@ function LostAndFoundReportsPageInner() {
                   interval={0}
                   angle={-8}
                   dy={12}
+                  tickFormatter={(v) => formatLocationLabel(String(v))}
                 />
                 <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} />
                 <Tooltip content={<NiceTooltip />} />
@@ -679,7 +876,7 @@ function LostAndFoundReportsPageInner() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Daily Trend" height={440}>
+          <ChartCard title="Daily Trend" height={420}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={dailyTrend} margin={{ top: 10, right: 18, left: 0, bottom: 35 }}>
                 <CartesianGrid stroke="#334155" strokeDasharray="3 3" />
@@ -752,12 +949,83 @@ function LostAndFoundReportsPageInner() {
         </div>
       </div>
 
-      {/* ======================= HIDDEN PDF EXPORT LAYOUT ======================= */}
-      <div
-        className="fixed -left-[99999px] top-0 pointer-events-none opacity-100"
-        aria-hidden="true"
-      >
-        {/* PAGE 1 */}
+      {/* ======================= HIDDEN PNG EXPORT LAYOUT ======================= */}
+      <div className="fixed -left-[99999px] top-0 pointer-events-none" aria-hidden="true">
+        <div
+          ref={pngChartsRef}
+          className="w-[1400px] bg-white text-slate-900 p-8"
+          style={{ fontFamily: "Arial, sans-serif" }}
+        >
+          <div className="mb-6">
+            <div className="text-sm font-semibold tracking-[0.2em] uppercase text-sky-700">
+              SecureWatch Pro v2.0
+            </div>
+            <div className="text-3xl font-bold mt-2">Lost &amp; Found Analytics</div>
+            <div className="text-sm text-slate-500 mt-2">
+              Generated on {new Date().toLocaleString()}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-6 mb-6">
+            <PdfChartCard title="Item Distribution" height={260}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={itemDistribution} margin={{ top: 10, right: 18, left: 0, bottom: 25 }}>
+                  <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                  <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 12 }} interval={0} />
+                  <YAxis stroke="#64748b" tick={{ fontSize: 12 }} />
+                  <Tooltip content={<PdfTooltip />} />
+                  <Bar dataKey="count" name="Count" fill="#2563eb" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </PdfChartCard>
+
+            <PdfChartCard title="Location Distribution" height={260}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={locationDistribution} margin={{ top: 10, right: 18, left: 0, bottom: 25 }}>
+                  <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="name"
+                    stroke="#64748b"
+                    tick={{ fontSize: 12 }}
+                    interval={0}
+                    tickFormatter={(v) => formatLocationLabel(String(v))}
+                  />
+                  <YAxis stroke="#64748b" tick={{ fontSize: 12 }} />
+                  <Tooltip content={<PdfTooltip />} />
+                  <Bar dataKey="count" name="Count" fill="#059669" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </PdfChartCard>
+          </div>
+
+          <PdfChartCard title="Daily Trend" height={260}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={dailyTrend} margin={{ top: 10, right: 18, left: 0, bottom: 25 }}>
+                <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                <XAxis dataKey="day" stroke="#64748b" tick={{ fontSize: 12 }} />
+                <YAxis stroke="#64748b" tick={{ fontSize: 12 }} />
+                <Tooltip content={<PdfTooltip />} />
+                <Line
+                  type="monotone"
+                  dataKey="count"
+                  name="Count"
+                  stroke="#ea580c"
+                  strokeWidth={3}
+                  dot={{ r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </PdfChartCard>
+
+          <div className="text-xs text-slate-400 mt-4 text-right">
+            SecureWatch Pro v2.0 © 2026
+          </div>
+        </div>
+      </div>
+
+      {/* ======================= HIDDEN PDF PAGE 1 ======================= */}
+      <div className="fixed -left-[99999px] top-0 pointer-events-none" aria-hidden="true">
         <div
           ref={pdfPage1Ref}
           className="w-[1200px] bg-white text-slate-900 p-10"
@@ -831,8 +1099,10 @@ function LostAndFoundReportsPageInner() {
             </div>
           </div>
         </div>
+      </div>
 
-        {/* PAGE 2 */}
+      {/* ======================= HIDDEN PDF PAGE 2 ======================= */}
+      <div className="fixed -left-[99999px] top-0 pointer-events-none" aria-hidden="true">
         <div
           ref={pdfChartsRef}
           className="w-[1200px] bg-white text-slate-900 p-10"
@@ -848,19 +1118,12 @@ function LostAndFoundReportsPageInner() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-6">
-            <PdfChartCard title="Item Distribution" height={360}>
+          <div className="grid grid-cols-2 gap-6 mb-6">
+            <PdfChartCard title="Item Distribution" height={250}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={itemDistribution} margin={{ top: 10, right: 18, left: 0, bottom: 35 }}>
+                <BarChart data={itemDistribution} margin={{ top: 10, right: 18, left: 0, bottom: 25 }}>
                   <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
-                  <XAxis
-                    dataKey="name"
-                    stroke="#64748b"
-                    tick={{ fontSize: 12 }}
-                    interval={0}
-                    angle={-10}
-                    dy={12}
-                  />
+                  <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 12 }} interval={0} />
                   <YAxis stroke="#64748b" tick={{ fontSize: 12 }} />
                   <Tooltip content={<PdfTooltip />} />
                   <Bar dataKey="count" name="Count" fill="#2563eb" radius={[8, 8, 0, 0]} />
@@ -868,20 +1131,16 @@ function LostAndFoundReportsPageInner() {
               </ResponsiveContainer>
             </PdfChartCard>
 
-            <PdfChartCard title="Location Distribution" height={360}>
+            <PdfChartCard title="Location Distribution" height={250}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={locationDistribution}
-                  margin={{ top: 10, right: 18, left: 0, bottom: 35 }}
-                >
+                <BarChart data={locationDistribution} margin={{ top: 10, right: 18, left: 0, bottom: 25 }}>
                   <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
                   <XAxis
                     dataKey="name"
                     stroke="#64748b"
                     tick={{ fontSize: 12 }}
                     interval={0}
-                    angle={-8}
-                    dy={12}
+                    tickFormatter={(v) => formatLocationLabel(String(v))}
                   />
                   <YAxis stroke="#64748b" tick={{ fontSize: 12 }} />
                   <Tooltip content={<PdfTooltip />} />
@@ -889,27 +1148,27 @@ function LostAndFoundReportsPageInner() {
                 </BarChart>
               </ResponsiveContainer>
             </PdfChartCard>
-
-            <PdfChartCard title="Daily Trend" height={360}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={dailyTrend} margin={{ top: 10, right: 18, left: 0, bottom: 35 }}>
-                  <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
-                  <XAxis dataKey="day" stroke="#64748b" tick={{ fontSize: 12 }} dy={12} />
-                  <YAxis stroke="#64748b" tick={{ fontSize: 12 }} />
-                  <Tooltip content={<PdfTooltip />} />
-                  <Line
-                    type="monotone"
-                    dataKey="count"
-                    name="Count"
-                    stroke="#ea580c"
-                    strokeWidth={3}
-                    dot={{ r: 4 }}
-                    activeDot={{ r: 6 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </PdfChartCard>
           </div>
+
+          <PdfChartCard title="Daily Trend" height={250}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={dailyTrend} margin={{ top: 10, right: 18, left: 0, bottom: 25 }}>
+                <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                <XAxis dataKey="day" stroke="#64748b" tick={{ fontSize: 12 }} />
+                <YAxis stroke="#64748b" tick={{ fontSize: 12 }} />
+                <Tooltip content={<PdfTooltip />} />
+                <Line
+                  type="monotone"
+                  dataKey="count"
+                  name="Count"
+                  stroke="#ea580c"
+                  strokeWidth={3}
+                  dot={{ r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </PdfChartCard>
         </div>
       </div>
     </div>
