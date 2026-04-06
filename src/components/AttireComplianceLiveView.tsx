@@ -1076,7 +1076,7 @@ export function AttireComplianceLiveView() {
       <div className="mb-6">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-white mb-1">Live View - Attire Compliance Monitoring</h2>
+            <h2 className="text-white text-2xl font-semibold mb-1">Live View - Attire Compliance Monitoring</h2>
             <p className="text-slate-400">Real-time detection of dress code violations</p>
           </div>
           <div className="flex items-center gap-4">
