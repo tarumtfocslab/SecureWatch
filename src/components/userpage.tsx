@@ -143,9 +143,11 @@ export function UsersPage() {
     <div className="flex-1 p-6 overflow-y-auto text-[15px]">
       {/* Header */}
       <div className="mb-6">
-        <h2 className="text-white mb-1">User Management</h2>
-        <p className="text-slate-400">
-          Manage system users and permissions
+        <h2 className="text-4xl font-bold text-white tracking-tight mb-2">
+          User Management
+        </h2>
+        <p className="text-base text-slate-400 max-w-2xl">
+          Manage system users, roles, and access permissions within SecureWatch.
         </p>
       </div>
 
