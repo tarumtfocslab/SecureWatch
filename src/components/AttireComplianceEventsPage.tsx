@@ -281,14 +281,14 @@ export function AttireComplianceEventsPage() {
           return {
             id: e.id,
             videoId: vid,
-            view: viewLabel,
+            view: e.view || viewLabel,
             imageUrl: e.evidence_url ? `${API_BASE}${e.evidence_url}` : "",
             violationType: labelToViolationType(e.label),
             status: e.status || "Pending",
-            location: `${srcName}, ${viewLabel}`,
+            location: e.location || `${srcName}, ${viewLabel}`,
             detectionDate: new Date(((e.ts || 0) * 1000) || Date.now()),
             source: sourceUi,
-            videoName: srcName,
+            videoName: e.video_name || srcName,
             notes:
               e.notes ||
               (e.conf != null
@@ -399,23 +399,73 @@ export function AttireComplianceEventsPage() {
   };
 
   const handleSaveEdit = async (updatedViolation: AttireViolation) => {
+    const prevViolation = violations.find(v => v.id === updatedViolation.id);
+    if (!prevViolation) return;
+
+    // convert UI type -> backend label
+    const nextLabel =
+      updatedViolation.violationType === "Sleeveless"
+        ? "sleeveless"
+        : updatedViolation.violationType === "Shorts"
+        ? "shorts"
+        : "slippers";
+
+    // split edited location into source name + view when possible
+    const rawLocation = String(updatedViolation.location || "").trim();
+    let nextVideoName = updatedViolation.videoName || "";
+    let nextView = updatedViolation.view || "normal";
+
+    if (rawLocation.includes(",")) {
+      const [left, ...rest] = rawLocation.split(",");
+      nextVideoName = left.trim() || nextVideoName;
+      nextView = rest.join(",").trim() || nextView;
+    } else if (rawLocation) {
+      nextView = rawLocation;
+    }
+
     // optimistic UI
-    setViolations(prev => prev.map(v => (v.id === updatedViolation.id ? updatedViolation : v)));
-    setSelectedViolation(s => (s && s.id === updatedViolation.id ? updatedViolation : s));
+    setViolations(prev =>
+      prev.map(v =>
+        v.id === updatedViolation.id
+          ? {
+              ...updatedViolation,
+              videoName: nextVideoName,
+              view: nextView,
+              location: nextVideoName ? `${nextVideoName}, ${nextView}` : nextView,
+            }
+          : v
+      )
+    );
+
+    setSelectedViolation(s =>
+      s && s.id === updatedViolation.id
+        ? {
+            ...updatedViolation,
+            videoName: nextVideoName,
+            view: nextView,
+            location: nextVideoName ? `${nextVideoName}, ${nextView}` : nextView,
+          }
+        : s
+    );
 
     try {
       await apiPatchEvent(updatedViolation.id, {
         status: updatedViolation.status,
-        location: updatedViolation.location,
         notes: updatedViolation.notes || "",
-        // optional: also persist label if you want
-        // label: updatedViolation.violationType.toLowerCase()
+        label: nextLabel,
+        video_name: nextVideoName,
+        view: nextView,
       });
     } catch (e) {
       alert((e as any)?.message || "Failed to save edit to backend");
+      setViolations(prev =>
+        prev.map(v => (v.id === prevViolation.id ? prevViolation : v))
+      );
+      setSelectedViolation(s =>
+        s && s.id === prevViolation.id ? prevViolation : s
+      );
     }
   };
-
   const getViolationIcon = (type: string) => {
     const iconMap: { [key: string]: string } = {
       'Sleeveless': '👕',
