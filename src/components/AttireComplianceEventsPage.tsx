@@ -603,16 +603,26 @@ export function AttireComplianceEventsPage() {
                   loading="lazy"
                 />
 
-                <div className="absolute top-2 left-2">
-                  <div
-                    className={`px-2.5 py-1 rounded text-[13px] font-medium ${
+                <div className="absolute top-2 left-2 z-10">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleStatusToggle(violation.id);
+                    }}
+                    className={`px-2.5 py-1 rounded text-[13px] font-medium transition-colors shadow-sm ${
                       violation.status === "Pending"
-                        ? "bg-red-500/90 text-white"
-                        : "bg-green-500/90 text-white"
+                        ? "bg-red-500/90 text-white hover:bg-red-600"
+                        : "bg-green-500/90 text-white hover:bg-green-600"
                     }`}
+                    title={
+                      violation.status === "Pending"
+                        ? "Click to mark as Resolved"
+                        : "Click to mark as Pending"
+                    }
                   >
                     {violation.status}
-                  </div>
+                  </button>
                 </div>
 
                 <div className="absolute top-2 right-2">
