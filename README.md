@@ -2,7 +2,10 @@
 
 SecureWatch is a web-based CCTV monitoring dashboard designed to provide real-time video surveillance, intelligent event detection, and administrative control through an intuitive interface. The system integrates AI-powered modules to enhance situational awareness and automate monitoring tasks.
 
-🔗 **Live Demo:** https://jinxuan-wong.github.io/SecureWatch/
+🔗 **Live Demo:** 
+
+https://jinxuan-wong.github.io/SecureWatch/
+
 https://qy248.github.io/SecureWatch/
 
 ---
