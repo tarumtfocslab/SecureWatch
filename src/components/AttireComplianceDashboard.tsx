@@ -252,16 +252,10 @@ export function AttireDashboard({
   const [err, setErr] = useState<string | null>(null);
   const [hotspotMode, setHotspotMode] = useState<"24h" | "7d">("24h");
 
-  const [searchDraft, setSearchDraft] = useState("");
-  const [searchApplied, setSearchApplied] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [floorFilter, setFloorFilter] = useState<"ALL" | "GF" | "1F" | "2F">("ALL");
-
-  const applySearch = () => {
-    setSearchApplied(searchDraft);
-    setFiltersOpen(false);
-  };
 
   const getFloorFromName = (nameOrId: string) => {
     const s = (nameOrId || "").toUpperCase();
@@ -403,7 +397,7 @@ export function AttireDashboard({
   }, []);
 
   const filteredSources = useMemo(() => {
-    const q = (searchApplied || "").trim().toLowerCase();
+    const q = (searchTerm || "").trim().toLowerCase();
 
     return (sources || [])
       .filter((s) => matchesFloor(s))
@@ -412,7 +406,7 @@ export function AttireDashboard({
         const hay = `${s.id} ${s.name ?? ""}`.toLowerCase();
         return hay.includes(q);
       });
-  }, [sources, searchApplied, floorFilter]);
+  }, [sources, searchTerm, floorFilter]);
 
   const toggleEnabledFromTile = async (videoId: string) => {
     const cur = enabledMap[videoId] ?? true;
@@ -533,13 +527,10 @@ export function AttireDashboard({
                 <div className="relative w-full">
                   <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
-                    value={searchDraft}
-                    onChange={(e) => setSearchDraft(e.target.value)}
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
                     placeholder="Search cameras..."
                     className="w-full h-10 bg-slate-900/60 border border-slate-800 rounded-lg pl-10 pr-3 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-600/40"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") applySearch();
-                    }}
                   />
                 </div>
 
@@ -590,9 +581,9 @@ export function AttireDashboard({
                   </div>
 
                   <button
-                    className="h-10 inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-4 text-sm"
-                    onClick={applySearch}
-                    title="Search"
+                    className="h-10 inline-flex items-center gap-2 bg-blue-600/70 text-white rounded-lg px-4 text-sm cursor-default"
+                    type="button"
+                    title="Search filters automatically while typing"
                   >
                     <Search className="w-4 h-4" />
                     Search
