@@ -273,11 +273,19 @@ export function AttireDashboard({
     return getFloorFromName(key) === floorFilter;
   };
 
+  const sourceSwitchLockRef = React.useRef(false);
+
   const handleSelectCameraSafe = (nextId: string) => {
     if (!nextId) return;
     if (nextId === selectedCamera) return;
+    if (sourceSwitchLockRef.current) return;
 
+    sourceSwitchLockRef.current = true;
     onSelectCamera(nextId);
+
+    window.setTimeout(() => {
+      sourceSwitchLockRef.current = false;
+    }, 800);
   };
 
   const DASHBOARD_THUMB_INTERVAL_MS = 10000; // refresh every 10 sec

@@ -197,21 +197,6 @@ async function fetchOfflineSources(): Promise<UnifiedSource[]> {
   }));
 }
 
-async function closePreviewSourceSafe(id: string, kind: SourceKind) {
-  if (!id) return;
-
-  try {
-    const closeUrl =
-      kind === "rtsp"
-        ? `${API_BASE}/api/rtsp/close/${encodeURIComponent(id)}`
-        : `${API_BASE}/api/offline/close/${encodeURIComponent(id)}`;
-
-    await fetch(closeUrl, { method: "POST" });
-  } catch {
-    // ignore
-  }
-}
-
 export function AttireComplianceSettingsPage() {
   const [activeTab, setActiveTab] = useState<
     "sources" | "roi" | "timing" | "violations" | "notifications" | "retention"
@@ -619,40 +604,27 @@ export function AttireComplianceSettingsPage() {
     })();
   }, [selectedCamera, isMosaic]);
 
-  const handleSelectSettingsSource = async (nextId: string) => {
+  const sourceSwitchLockRef = useRef(false);
+
+  const handleSelectSettingsSource = (nextId: string) => {
     if (!nextId) return;
     if (nextId === selectedCamera) return;
+    if (sourceSwitchLockRef.current) return;
 
-    const prev = videoSources.find((s) => s.id === selectedCamera);
+    sourceSwitchLockRef.current = true;
+
     const next = videoSources.find((s) => s.id === nextId);
-
-    if (prev) {
-      let activeIds: string[] = [];
-      try {
-        activeIds = JSON.parse(localStorage.getItem("attire:enabledCameraIds") || "[]");
-        if (!Array.isArray(activeIds)) activeIds = [];
-      } catch {
-        activeIds = [];
-      }
-
-      const prevIsStillInLiveView = activeIds.includes(prev.id);
-
-      if (!prevIsStillInLiveView) {
-        closePreviewSourceSafe(prev.id, prev.kind).catch(() => {});
-      }
-    }
-
     if (next) {
       setSelectedKind(next.kind);
     }
 
     setSelectedCamera(nextId);
+
+    window.setTimeout(() => {
+      sourceSwitchLockRef.current = false;
+    }, 800);
   };
-
-  function clampNum(v: number, min: number, max: number) {
-    return Math.max(min, Math.min(max, v));
-  }
-
+  
   const nudge = (key: DewarpKey, delta: number) => {
     const limits: Record<DewarpKey, { min: number; max: number; step: number }> = {
       roll_deg:  { min: -180, max: 180, step: 1 },
@@ -662,7 +634,7 @@ export function AttireComplianceSettingsPage() {
 
     const { min, max } = limits[key];
     const cur = currentViewCfg[key];  
-    setCurrentViewCfg({ [key]: clampNum(cur + delta, min, max) } as Pick<DewarpViewCfg, DewarpKey>);
+    setCurrentViewCfg({ [key]: clamp(cur + delta, min, max) } as Pick<DewarpViewCfg, DewarpKey>);
   };
 
   const selectedCameraData = cameraSettings.find((cam) => cam.id === selectedCamera);
