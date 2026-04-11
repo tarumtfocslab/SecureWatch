@@ -308,7 +308,7 @@ function LostAndFoundReportsPageInner() {
     setLoading(true);
     try {
       const res = await fetch(
-        buildApiUrl(LOSTFOUND_API_BASE, "/api/lostfound/reports/items");
+        buildApiUrl(LOSTFOUND_API_BASE, "/api/lostfound/reports/items"),
         { signal: ac.signal }
       );
       if (!res.ok) throw new Error("Failed to load items");
