@@ -482,11 +482,15 @@ export default function LostAndFoundEventsPage() {
     retentionSettings,
   ]);
 
-  const counts = useMemo(() => {
-    const lost = filtered.filter(isLost).length;
-    const solved = filtered.filter(isSolved).length;
-    return { total: filtered.length, lost, solved };
-  }, [filtered]);
+const counts = useMemo(() => {
+  const lost = items.filter(isLost).length;
+  const solved = items.filter(isSolved).length;
+  return {
+    total: items.length,
+    lost,
+    solved,
+  };
+}, [items]);
 
   async function onSolve(it: LostFoundItem) {
     try {
