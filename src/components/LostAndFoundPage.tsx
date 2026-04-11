@@ -482,9 +482,34 @@ export default function LostAndFoundEventsPage() {
     retentionSettings,
   ]);
 
+function normalizeStatus(x: LostFoundItem): "lost" | "solved" | "other" {
+  const s = String(x?.status ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (s === "lost") return "lost";
+  if (s === "solved") return "solved";
+  return "other";
+}
+
+function isLost(x: LostFoundItem) {
+  return normalizeStatus(x) === "lost";
+}
+
+function isSolved(x: LostFoundItem) {
+  return normalizeStatus(x) === "solved";
+}
+
 const counts = useMemo(() => {
-  const lost = items.filter(isLost).length;
-  const solved = items.filter(isSolved).length;
+  let lost = 0;
+  let solved = 0;
+
+  for (const it of items) {
+    const status = normalizeStatus(it);
+    if (status === "lost") lost += 1;
+    else if (status === "solved") solved += 1;
+  }
+
   return {
     total: items.length,
     lost,
