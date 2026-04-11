@@ -344,28 +344,6 @@ export default function LostAndFoundEventsPage() {
     setErr(null);
     try {
       const data = await apiGetItems(ac.signal);
-
-      console.log("[EVENT FRONTEND] RAW FETCH COUNT =", data.length);
-      console.log(
-        "[EVENT FRONTEND] RAW LOST =",
-        data.filter((x) => (x.status || "lost").toLowerCase().includes("lost")).length
-      );
-      console.log(
-        "[EVENT FRONTEND] RAW SOLVED =",
-        data.filter((x) => (x.status || "").toLowerCase().includes("solv")).length
-      );
-      console.log(
-        "[EVENT FRONTEND] SAMPLE ITEMS =",
-        data.slice(0, 5).map((x) => ({
-          id: x.id,
-          status: x.status,
-          firstSeenTs: x.firstSeenTs,
-          lastSeenTs: x.lastSeenTs,
-          location: x.location,
-          label: x.label,
-        }))
-      );
-
       setItems(data);
 
       setBrokenImages((prev) => {
@@ -427,18 +405,6 @@ export default function LostAndFoundEventsPage() {
       1,
       3650
     );
-
-    useEffect(() => {
-      console.log("[EVENT FRONTEND] FILTERED COUNT =", filtered.length);
-      console.log(
-        "[EVENT FRONTEND] FILTERED LOST =",
-        filtered.filter((x) => (x.status || "lost").toLowerCase().includes("lost")).length
-      );
-      console.log(
-        "[EVENT FRONTEND] FILTERED SOLVED =",
-        filtered.filter((x) => (x.status || "").toLowerCase().includes("solv")).length
-      );
-    }, [filtered]);
 
     const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
 
