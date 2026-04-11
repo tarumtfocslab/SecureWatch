@@ -428,6 +428,18 @@ export default function LostAndFoundEventsPage() {
       3650
     );
 
+    useEffect(() => {
+      console.log("[EVENT FRONTEND] FILTERED COUNT =", filtered.length);
+      console.log(
+        "[EVENT FRONTEND] FILTERED LOST =",
+        filtered.filter((x) => (x.status || "lost").toLowerCase().includes("lost")).length
+      );
+      console.log(
+        "[EVENT FRONTEND] FILTERED SOLVED =",
+        filtered.filter((x) => (x.status || "").toLowerCase().includes("solv")).length
+      );
+    }, [filtered]);
+
     const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
 
     return items.filter((it) => {
