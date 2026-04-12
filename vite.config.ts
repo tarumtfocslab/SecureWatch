@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import path from 'path';
 
-const appBase = process.env.APP_BASE || '/SecureWatch/';
+const appBase = process.env.APP_BASE || '/SecureWatch/' || '/';
 
 export default defineConfig({
   base: appBase,
