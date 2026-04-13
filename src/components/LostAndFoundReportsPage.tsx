@@ -59,12 +59,21 @@ function fmtCsvTs(ts?: number) {
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
 }
 
+// Update the isLost and isSolved functions to exclude deleted items
 function isLost(x: LostFoundItem) {
-  return (x.status || "").toLowerCase().includes("lost");
+  const status = (x.status || "").toLowerCase();
+  return status.includes("lost") && !status.includes("delete") && !status.includes("deleted");
 }
 
 function isSolved(x: LostFoundItem) {
-  return (x.status || "").toLowerCase().includes("solv");
+  const status = (x.status || "").toLowerCase();
+  return status.includes("solv") && !status.includes("delete") && !status.includes("deleted");
+}
+
+// Also add a helper function to check if an item is deleted
+function isDeleted(x: LostFoundItem) {
+  const status = (x.status || "").toLowerCase();
+  return status.includes("delete") || status.includes("deleted");
 }
 
 function safeText(v: unknown, fallback = "-") {
@@ -382,7 +391,8 @@ function LostAndFoundReportsPageInner() {
   }, [items, q, statusFilter, sourceFilter]);
 
   const summary = useMemo(() => {
-    const active = filtered.filter((it) => !String(it.status || "").toLowerCase().includes("delete"));
+    // First filter out deleted items completely
+    const active = filtered.filter((it) => !isDeleted(it));
     const lost = active.filter(isLost).length;
     const solved = active.filter(isSolved).length;
 
@@ -396,10 +406,12 @@ function LostAndFoundReportsPageInner() {
 
   const itemDistribution = useMemo(() => {
     const map: Record<string, number> = {};
-    filtered.forEach((i) => {
-      const key = i.label || "Unknown";
-      map[key] = (map[key] || 0) + 1;
-    });
+    filtered
+      .filter((it) => !isDeleted(it)) // Exclude deleted items
+      .forEach((i) => {
+        const key = i.label || "Unknown";
+        map[key] = (map[key] || 0) + 1;
+      });
     return Object.entries(map)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
@@ -408,10 +420,12 @@ function LostAndFoundReportsPageInner() {
 
   const locationDistribution = useMemo(() => {
     const map: Record<string, number> = {};
-    filtered.forEach((i) => {
-      const key = i.location || "Unknown";
-      map[key] = (map[key] || 0) + 1;
-    });
+    filtered
+      .filter((it) => !isDeleted(it)) // Exclude deleted items
+      .forEach((i) => {
+        const key = i.location || "Unknown";
+        map[key] = (map[key] || 0) + 1;
+      });
     return Object.entries(map)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
@@ -420,12 +434,14 @@ function LostAndFoundReportsPageInner() {
 
   const dailyTrend = useMemo(() => {
     const map: Record<string, number> = {};
-    filtered.forEach((i) => {
-      if (!i.firstSeenTs) return;
-      const ms = i.firstSeenTs > 2_000_000_000_000 ? i.firstSeenTs : i.firstSeenTs * 1000;
-      const d = new Date(ms).toLocaleDateString();
-      map[d] = (map[d] || 0) + 1;
-    });
+    filtered
+      .filter((it) => !isDeleted(it)) // Exclude deleted items
+      .forEach((i) => {
+        if (!i.firstSeenTs) return;
+        const ms = i.firstSeenTs > 2_000_000_000_000 ? i.firstSeenTs : i.firstSeenTs * 1000;
+        const d = new Date(ms).toLocaleDateString();
+        map[d] = (map[d] || 0) + 1;
+      });
 
     return Object.entries(map)
       .map(([day, count]) => ({ day, count }))
@@ -444,7 +460,9 @@ function LostAndFoundReportsPageInner() {
   }, [dailyTrend]);
 
   const latestEvidenceItems = useMemo(() => {
-    return filtered.filter((it) => !!it.imageUrl).slice(0, 6);
+    return filtered
+      .filter((it) => !isDeleted(it) && !!it.imageUrl) // Exclude deleted items
+      .slice(0, 6);
   }, [filtered]);
 
   useEffect(() => {
@@ -953,36 +971,41 @@ function LostAndFoundReportsPageInner() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((it) => (
-                  <tr key={it.id} className="border-t border-white/5 hover:bg-white/[0.03]">
-                    <td className="p-3">
-                      {it.imageUrl ? (
-                        <img
-                          src={it.imageUrl}
-                          className="w-16 h-12 object-cover rounded-lg ring-1 ring-white/10"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = "none";
-                          }}
-                        />
-                      ) : (
-                        <span className="text-slate-500">-</span>
-                      )}
-                    </td>
-                    <td className="p-3 font-medium text-slate-100">{it.label}</td>
-                    <td className="p-3 text-slate-200">{it.location}</td>
-                    <td className="p-3 text-slate-300">{(it.source || "").toUpperCase()}</td>
-                    <td className="p-3">
-                      <span className={isLost(it) ? "text-red-400" : "text-emerald-400"}>
-                        {isLost(it) ? "lost" : "solved"}
-                      </span>
-                    </td>
-                    <td className="p-3 text-slate-300">{fmtTs(it.firstSeenTs)}</td>
-                    <td className="p-3 text-slate-300">{fmtTs(it.lastSeenTs)}</td>
-                  </tr>
-                ))}
+                {filtered
+                  .filter((it) => {
+                    const status = (it.status || "").toLowerCase();
+                    return !status.includes("delete") && !status.includes("deleted");
+                  })
+                  .map((it) => (
+                    <tr key={it.id} className="border-t border-white/5 hover:bg-white/[0.03]">
+                      <td className="p-3">
+                        {it.imageUrl ? (
+                          <img
+                            src={it.imageUrl}
+                            className="w-16 h-12 object-cover rounded-lg ring-1 ring-white/10"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <span className="text-slate-500">-</span>
+                        )}
+                      </td>
+                      <td className="p-3 font-medium text-slate-100">{it.label}</td>
+                      <td className="p-3 text-slate-200">{it.location}</td>
+                      <td className="p-3 text-slate-300">{(it.source || "").toUpperCase()}</td>
+                      <td className="p-3">
+                        <span className={isLost(it) ? "text-red-400" : "text-emerald-400"}>
+                          {isLost(it) ? "lost" : "solved"}
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-300">{fmtTs(it.firstSeenTs)}</td>
+                      <td className="p-3 text-slate-300">{fmtTs(it.lastSeenTs)}</td>
+                    </tr>
+                  ))}
               </tbody>
-            </table>
-          </div>
+              </table>
+            </div>
 
           {filtered.length === 0 && (
             <div className="p-8 text-center text-slate-400">No items found</div>
