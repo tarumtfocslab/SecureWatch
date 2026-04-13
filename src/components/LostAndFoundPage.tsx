@@ -395,41 +395,7 @@ export default function LostAndFoundEventsPage() {
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
 
-    const retentionEnabled =
-      typeof retentionSettings?.data_retention_enabled === "boolean"
-        ? retentionSettings.data_retention_enabled
-        : true;
-
-    const retentionDays = clamp(
-      Number(retentionSettings?.data_retention_days ?? 90) || 90,
-      1,
-      3650
-    );
-
-    const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-
     return items.filter((it) => {
-      if (retentionEnabled) {
-        const tsRaw =
-          it.lastSeenTs ??
-          it.firstSeenTs ??
-          it.updatedAt ??
-          (typeof it.raw?.lastSeenTs === "number"
-            ? it.raw.lastSeenTs
-            : undefined) ??
-          (typeof it.raw?.firstSeenTs === "number"
-            ? it.raw.firstSeenTs
-            : undefined) ??
-          (typeof it.raw?.updatedAt === "number"
-            ? it.raw.updatedAt
-            : undefined) ??
-          (typeof it.raw?.updated_at === "number"
-            ? it.raw.updated_at
-            : undefined);
-
-     
-      }
-
       if (statusFilter === "lost" && !isLost(it)) return false;
       if (statusFilter === "solved" && !isSolved(it)) return false;
 
@@ -476,9 +442,7 @@ export default function LostAndFoundEventsPage() {
     sourceFilter,
     labelFilter,
     locationFilter,
-    retentionSettings,
   ]);
-
 function normalizeStatus(x: LostFoundItem): "lost" | "solved" | "other" {
   const s = String(x?.status ?? "")
     .trim()
@@ -501,18 +465,18 @@ const counts = useMemo(() => {
   let lost = 0;
   let solved = 0;
 
-  for (const it of items) {
+  for (const it of filtered) {
     const status = normalizeStatus(it);
     if (status === "lost") lost += 1;
     else if (status === "solved") solved += 1;
   }
 
   return {
-    total: items.length,
+    total: filtered.length,
     lost,
     solved,
   };
-}, [items]);
+}, [filtered]);
 
   async function onSolve(it: LostFoundItem) {
     try {
