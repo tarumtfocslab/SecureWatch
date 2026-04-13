@@ -42,13 +42,13 @@ type LostFoundItem = {
 
 function fmtTs(ts?: number) {
   if (!ts) return "-";
-  const ms = ts > 2_000_000_000_000 ? ts : ts * 1000;
+  const ms = ts 
   return new Date(ms).toLocaleString();
 }
 
 function fmtCsvTs(ts?: number) {
   if (!ts) return "";
-  const ms = ts > 2_000_000_000_000 ? ts : ts * 1000;
+  const ms = ts 
   const d = new Date(ms);
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
