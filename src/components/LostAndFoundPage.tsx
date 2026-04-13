@@ -48,26 +48,8 @@ function clamp(n: number, a: number, b: number) {
 function fmtTs(ts?: number) {
   const t = Number(ts || 0);
   if (!t) return "-";
-
-  // real epoch milliseconds
-  if (t > 2_000_000_000_000) {
-    return new Date(t).toLocaleString();
-  }
-
-  // real epoch seconds
-  if (t > 1_000_000_000) {
-    return new Date(t * 1000).toLocaleString();
-  }
-
-  // relative video seconds
-  const total = Math.floor(t);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-
-  return h > 0
-    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
-    : `${m}:${String(s).padStart(2, "0")}`;
+  const ms = t 
+  return new Date(ms).toLocaleString();
 }
 
 function isLost(x: LostFoundItem) {
