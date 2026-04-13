@@ -48,7 +48,7 @@ function clamp(n: number, a: number, b: number) {
 function fmtTs(ts?: number) {
   const t = Number(ts || 0);
   if (!t) return "-";
-  const ms = t 
+  const ms = t > 2_000_000_000_000 ? t : t * 1000;
   return new Date(ms).toLocaleString();
 }
 
@@ -73,7 +73,7 @@ function getItemSortTs(it: any): number {
   const t = Number(rawTs || 0);
   if (!t) return 0;
 
-  return t 
+  return t > 2_000_000_000_000 ? t : t * 1000;
 }
 
 async function apiGetItems(signal?: AbortSignal): Promise<LostFoundItem[]> {
