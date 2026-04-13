@@ -428,8 +428,14 @@ export default function LostAndFoundEventsPage() {
             : undefined);
 
         if (typeof tsRaw === "number" && tsRaw > 0) {
-          const tsMs = tsRaw > 2_000_000_000_000 ? tsRaw : tsRaw * 1000;
-          if (tsMs < cutoffMs) return false;
+          // only apply retention for real epoch timestamps
+          const looksLikeEpochSeconds = tsRaw >= 1_700_000_000;
+          const looksLikeEpochMs = tsRaw >= 1_700_000_000_000;
+
+          if (looksLikeEpochSeconds || looksLikeEpochMs) {
+            const tsMs = looksLikeEpochMs ? tsRaw : tsRaw * 1000;
+            if (tsMs < cutoffMs) return false;
+          }
         }
       }
 
