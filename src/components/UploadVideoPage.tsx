@@ -280,11 +280,21 @@ export function UploadVideoPage({
     const cleanStem = String(stem || "").trim();
     if (!cleanStem) return;
 
-    localStorage.setItem("lostfound:settingsTab", "roi");
     localStorage.setItem("lostfound:offlineStem", cleanStem);
     localStorage.setItem("lostfound:roiOfflineStem", cleanStem);
 
-    nav(`/lostfound/settings?tab=roi&offline=${encodeURIComponent(cleanStem)}#roi`);
+    const targetUrl = `/lostfound/settings?offline=${encodeURIComponent(cleanStem)}`;
+
+    console.log("[OPEN SETTINGS] stem =", cleanStem);
+    console.log("[OPEN SETTINGS] callback exists =", !!onOpenLostFoundSettings);
+    console.log("[OPEN SETTINGS] url =", targetUrl);
+
+    if (onOpenLostFoundSettings) {
+      onOpenLostFoundSettings(cleanStem);
+      return;
+    }
+
+    nav(targetUrl);
   };
 
   useEffect(() => {
