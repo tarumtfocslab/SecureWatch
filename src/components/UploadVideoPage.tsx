@@ -24,6 +24,7 @@ type UploadedVideo = {
   status: VideoStatus;
   backendPath?: string;
 
+  // lostfound-specific
   error?: string | null;
   h264_ready?: boolean;
   h264_name?: string;
@@ -268,10 +269,10 @@ export function UploadVideoPage({
     const cleanStem = String(stem || "").trim();
     if (!cleanStem) return;
 
-    // help the settings page open the ROI tab/section immediately
+    // Help Settings page know it should open ROI tab/section
     localStorage.setItem("lostfound:settingsTab", "roi");
+    localStorage.setItem("lostfound:offlineStem", cleanStem);
     localStorage.setItem("lostfound:roiOfflineStem", cleanStem);
-    localStorage.setItem("lostfound:focusOfflineStem", cleanStem);
 
     if (onOpenLostFoundSettings) {
       onOpenLostFoundSettings(cleanStem);
@@ -280,6 +281,7 @@ export function UploadVideoPage({
 
     nav(`/lostfound/settings?tab=roi&offline=${encodeURIComponent(cleanStem)}#roi`);
   };
+
 
   useEffect(() => {
     localStorage.setItem(MODE_STORAGE_KEY, mode);
@@ -360,7 +362,7 @@ export function UploadVideoPage({
       setUploadedVideos(normalizeVideos(targetMode, data));
     } catch (err) {
       console.error("[REFRESH] error =", err);
-      // IMPORTANT: keep current list, do not clear it
+      
     }
   };
 
@@ -384,7 +386,7 @@ export function UploadVideoPage({
         }
       } catch (err) {
         console.error("[REFRESH] error =", err);
-        // IMPORTANT: keep current list, do not clear it
+       
       }
     };
 
@@ -484,13 +486,40 @@ export function UploadVideoPage({
       ...prev,
     ]);
 
-    let saved: any = null;
-
-    // 1) upload only
     try {
-      saved = await uploadToBackend(file, uploadMode);
+      const saved = await uploadToBackend(file, uploadMode);
+
+      setUploadedVideos((prev) =>
+        prev.map((v) =>
+          v.id === tempId
+            ? {
+                ...v,
+                id: saved.id ?? v.id,
+                name: saved.name ?? file.name,
+                status: saved.status ?? "ready",
+                backendPath: saved.path,
+                h264_ready: saved.h264_ready ?? v.h264_ready,
+                roi_ready: saved.roi_ready ?? v.roi_ready,
+                analysis_status: saved.analysis_status ?? v.analysis_status,
+                is_analyzing: saved.is_analyzing ?? v.is_analyzing,
+                error: null,
+              }
+            : v
+        )
+      );
+      await sleep(700);
+      await refreshVideos(uploadMode);
+
+      if (uploadMode === "lost-found") {
+        const stem = String(saved?.id || "").trim();
+        if (stem) {
+          openLostFoundSettings(stem);
+        }
+      }
+
+      onProcessingComplete?.();
     } catch (e: any) {
-      console.error("[UPLOAD] failed:", e);
+      console.error(e);
 
       const msg = String(e?.message || e || "Upload failed");
 
@@ -507,50 +536,7 @@ export function UploadVideoPage({
       );
 
       alert(`Upload failed: ${msg}`);
-      return;
     }
-
-    // 2) update local row immediately
-    setUploadedVideos((prev) =>
-      prev.map((v) =>
-        v.id === tempId
-          ? {
-              ...v,
-              id: saved.id ?? v.id,
-              name: saved.name ?? file.name,
-              status: saved.status ?? "processing",
-              backendPath: saved.path,
-              h264_ready: saved.h264_ready ?? v.h264_ready,
-              roi_ready: saved.roi_ready ?? v.roi_ready,
-              analysis_status: saved.analysis_status ?? v.analysis_status,
-              is_analyzing: saved.is_analyzing ?? v.is_analyzing,
-              error: null,
-            }
-          : v
-      )
-    );
-
-    // 3) refresh list, but do not treat refresh failure as upload failure
-    try {
-      await sleep(700);
-      await refreshVideos(uploadMode);
-    } catch (e) {
-      console.warn("[UPLOAD] refresh after upload failed:", e);
-    }
-
-    // 4) jump to settings ROI section, but do not treat navigation failure as upload failure
-    if (uploadMode === "lost-found") {
-      try {
-        const stem = String(saved?.id || "").trim();
-        if (stem) {
-          openLostFoundSettings(stem);
-        }
-      } catch (e) {
-        console.warn("[UPLOAD] open settings failed:", e);
-      }
-    }
-
-    onProcessingComplete?.();
   };
 
   const handleDelete = async (videoId: string) => {
