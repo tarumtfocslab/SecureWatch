@@ -296,7 +296,7 @@ export default function LostAndFoundEventsPage() {
     "all"
   );
   const [sourceFilter, setSourceFilter] = useState<
-    "all" | "live" | "upload" | "offline"
+    "all" | "live"  | "offline"
   >("all");
   const [labelFilter, setLabelFilter] = useState<string>("all");
   const [locationFilter, setLocationFilter] = useState<string>("all");
@@ -400,14 +400,14 @@ export default function LostAndFoundEventsPage() {
       if (statusFilter === "solved" && !isSolved(it)) return false;
 
       const src = (it.source || "").toLowerCase();
-      if (sourceFilter !== "all") {
-        if (sourceFilter === "offline") {
-          const looksOffline = !!it.videoId && !it.cameraId;
-          if (!looksOffline && src !== "offline") return false;
-        } else if (src !== sourceFilter) {
-          if (!(sourceFilter === "upload" && src === "offline")) return false;
+        if (sourceFilter !== "all") {
+          if (sourceFilter === "offline") {
+            const looksOffline = !!it.videoId && !it.cameraId;
+            if (!looksOffline && src !== "offline") return false;
+          } else if (src !== sourceFilter) {
+            return false;
+          }
         }
-      }
 
       if (labelFilter !== "all" && (it.label || "") !== labelFilter) {
         return false;
@@ -627,7 +627,6 @@ const counts = useMemo(() => {
             >
               <option value="all">Source: All</option>
               <option value="live">Source: Live</option>
-              <option value="upload">Source: Upload/Offline</option>
               <option value="offline">Source: Offline</option>
             </select>
 
