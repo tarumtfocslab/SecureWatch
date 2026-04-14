@@ -617,6 +617,20 @@ export function AttireComplianceLiveView() {
     };
   }, []);
 
+  useEffect(() => {
+    const validIds = new Set([
+      ...uploadedVideos.map((v) => v.id),
+      ...rtspSources.map((s) => s.id),
+    ]);
+
+    if (!selectedVideoId) return;
+    if (validIds.has(selectedVideoId)) return;
+
+    setSelectedVideoId("");
+    localStorage.removeItem("attire:liveVideoId");
+    window.dispatchEvent(new Event("attire:liveVideoChanged"));
+  }, [selectedVideoId, uploadedVideos, rtspSources]);
+
   const prevLiveIdsRef = useRef<string[]>([]);
   const prevRtspIdsRef = useRef<string[]>([]);
 

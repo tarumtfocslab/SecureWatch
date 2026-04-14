@@ -567,10 +567,14 @@ export function UploadVideoPage({
       if (deleteMode === "lost-found") {
         const ok = window.confirm(`Delete ${videoId}? This will remove file + manifest + outputs.`);
         if (!ok) return;
+      } else {
+        const ok = window.confirm(`Delete uploaded video ${videoId}?`);
+        if (!ok) return;
       }
 
       const res = await fetch(url, {
         method: "DELETE",
+        cache: "no-store",
       });
 
       const text = await res.text();
@@ -579,9 +583,22 @@ export function UploadVideoPage({
       if (!res.ok) {
         throw new Error(`Delete failed: ${res.status} ${text}`);
       }
+
+      // Attire-specific client cleanup
+      if (deleteMode === "attire") {
+        const selectedId = localStorage.getItem("attire:liveVideoId") || "";
+        if (selectedId === videoId) {
+          localStorage.removeItem("attire:liveVideoId");
+          window.dispatchEvent(new Event("attire:liveVideoChanged"));
+        }
+
+        localStorage.setItem("attire:enabledSourcesVer", String(Date.now()));
+        window.dispatchEvent(new Event("attire:sourcesChanged"));
+      }
     } catch (e) {
       console.warn("Backend delete failed", e);
       alert(`Delete failed: ${String(e)}`);
+      return;
     }
 
     await refreshVideos(deleteMode);
