@@ -117,7 +117,11 @@ export function Sidebar({
   return (
     <aside className="w-72 h-screen shrink-0 sticky top-0 bg-slate-900 border-r border-slate-800 flex flex-col">
       {/* Logo */}
-      <div className="p-6 border-b border-slate-800">
+      <button
+        type="button"
+        onClick={() => onPageChange("dashboard")}
+        className="p-6 border-b border-slate-800 w-full text-left hover:bg-slate-800/50 transition-colors"
+      >
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
             <Video className="w-6 h-6 text-white" />
@@ -127,7 +131,7 @@ export function Sidebar({
             <p className="text-slate-400 text-xs mt-0.5">Pro v2.0</p>
           </div>
         </div>
-      </div>
+      </button>
 
       {/* Navigation */}
       <nav className="flex-1 p-4 overflow-y-auto">
