@@ -675,62 +675,17 @@ export default function LostAndFoundSettingsPage({
   offlineStem: offlineStemProp,
 }: LostAndFoundSettingsPageProps) {
   type Tab = "sources" | "roi" | "notifications" | "dewarp" | "retention";
+  const [tab, setTab] = useState<Tab>("sources");
 
   const loc = useLocation();
   const q = new URLSearchParams(loc.search);
 
-  function normalizeTab(v: string | null | undefined): Tab {
-    const s = String(v || "").trim().toLowerCase();
-    if (
-      s === "sources" ||
-      s === "roi" ||
-      s === "notifications" ||
-      s === "dewarp" ||
-      s === "retention"
-    ) {
-      return s as Tab;
-    }
-    return "sources";
-  }
-
-  const initialTab = normalizeTab(
-    q.get("tab") ||
-      (loc.hash || "").replace("#", "") ||
-      localStorage.getItem("lostfound:settingsTab")
-  );
-
-  const [tab, setTab] = useState<Tab>(initialTab);
-
   const incomingOfflineStem =
     String(offlineStemProp || "").trim() ||
-    String(q.get("offline") || "").trim() ||
-    String(localStorage.getItem("lostfound:offlineStem") || "").trim();
+    String(localStorage.getItem("lostfound:offlineStem") || "").trim() ||
+    String(q.get("offline") || "").trim();
 
   const [mode, setMode] = useState<Mode>(incomingOfflineStem ? "offline" : "live");
-
-  useEffect(() => {
-    const nextTab = normalizeTab(
-      q.get("tab") ||
-        (loc.hash || "").replace("#", "") ||
-        localStorage.getItem("lostfound:settingsTab")
-    );
-
-    setTab(nextTab);
-
-    const nextOfflineStem =
-      String(offlineStemProp || "").trim() ||
-      String(q.get("offline") || "").trim() ||
-      String(localStorage.getItem("lostfound:offlineStem") || "").trim();
-
-    if (nextOfflineStem) {
-      setOfflineStem(nextOfflineStem);
-      setMode("offline");
-    }
-  }, [loc.search, loc.hash, offlineStemProp]);
-
-  useEffect(() => {
-    localStorage.setItem("lostfound:settingsTab", tab);
-  }, [tab]);
 
   const [cameras, setCameras] = useState<CameraItem[]>([]);
   const [offlineVideos, setOfflineVideos] = useState<OfflineVideoItem[]>([]);
