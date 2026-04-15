@@ -722,7 +722,10 @@ function CameraCard({
           </div>
         ) : !fish ? (
           <div className="rounded-xl border border-slate-700/40 overflow-hidden">
-            <div className="w-full relative bg-black rounded-lg" style={{ aspectRatio: String(ratio0) }}>
+           <div
+              className="w-full relative bg-black rounded-lg min-h-[410px]"
+              style={{ aspectRatio: String(ratio0) }}
+            >
               {isActiveStream ? (
                 <>
                   <MjpegStream
@@ -785,13 +788,16 @@ function CameraCard({
             />
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="rounded-xl border border-slate-700/40 overflow-hidden">
               <div className="px-3 py-2 text-xs text-slate-300 bg-slate-950/40 border-b border-slate-700/40">
                 Group A (2×2 grid) {!detectionEnabled && "- Display Only"}
               </div>
 
-              <div className="w-full relative bg-black rounded-lg" style={{ aspectRatio: String(ratioA) }}>
+              <div
+                className="w-full relative bg-black rounded-lg max-h-[350px]"
+                style={{ aspectRatio: String(ratioA) }}
+              >
                 {isActiveStream ? (
                   <MjpegStream
                     url={streamUrls_.groupA}
@@ -829,7 +835,10 @@ function CameraCard({
                 Group B (2×2 grid) {!detectionEnabled && "- Display Only"}
               </div>
 
-              <div className="w-full relative bg-black rounded-lg" style={{ aspectRatio: String(ratioB) }}>
+              <div
+                className="w-full relative bg-black rounded-lg max-h-[350px]"
+                style={{ aspectRatio: String(ratioA) }}
+              >
                 {isActiveStream ? (
                   <MjpegStream
                     url={streamUrls_.groupB}
