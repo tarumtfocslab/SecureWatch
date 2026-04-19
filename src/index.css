@@ -197,8 +197,23 @@ html {
   font-size: var(--font-size);
 }
 
+.date-input {
+  color-scheme: dark;
+  position: relative;
+}
+
+/* hide native icon */
 .date-input::-webkit-calendar-picker-indicator {
-  filter: invert(1) brightness(3);
-  opacity: 1;
+  opacity: 0;
+  position: absolute;
+  right: 12px;
+  width: 18px;
+  height: 18px;
   cursor: pointer;
+}
+
+/* optional: hide clear/spin buttons */
+.date-input::-webkit-clear-button,
+.date-input::-webkit-inner-spin-button {
+  display: none;
 }

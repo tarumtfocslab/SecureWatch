@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   Filter,
   Clock,
+  Calendar,
 } from "lucide-react";
 import {
   LOSTFOUND_API_BASE,
@@ -45,19 +46,31 @@ function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
 }
 
-function fmtTs(ts?: number) {
+function toMs(ts?: number) {
   const t = Number(ts || 0);
-  if (!t) return "-";
-  const ms = t > 2_000_000_000_000 ? t : t * 1000;
+  if (!t) return 0;
+  return t > 2_000_000_000_000 ? t : t * 1000;
+}
+
+function fmtTs(ts?: number) {
+  const ms = toMs(ts);
+  if (!ms) return "-";
   return new Date(ms).toLocaleString();
 }
 
+function normalizeStatus(x: LostFoundItem): "lost" | "solved" | "other" {
+  const s = String(x?.status ?? "").trim().toLowerCase();
+  if (s === "lost") return "lost";
+  if (s === "solved") return "solved";
+  return "other";
+}
+
 function isLost(x: LostFoundItem) {
-  return (x.status || "lost").toLowerCase().includes("lost");
+  return normalizeStatus(x) === "lost";
 }
 
 function isSolved(x: LostFoundItem) {
-  return (x.status || "").toLowerCase().includes("solv");
+  return normalizeStatus(x) === "solved";
 }
 
 function getItemSortTs(it: any): number {
@@ -201,29 +214,47 @@ function downloadBlob(filename: string, data: Blob) {
   URL.revokeObjectURL(url);
 }
 
-async function apiExportCsv(params: {
-  q?: string;
-  status?: string;
-  source?: string;
-  label?: string;
-  location?: string;
-}) {
-  const usp = new URLSearchParams();
-  if (params.q) usp.set("q", params.q);
-  if (params.status) usp.set("status", params.status);
-  if (params.source) usp.set("source", params.source);
-  if (params.label) usp.set("label", params.label);
-  if (params.location) usp.set("location", params.location);
+function exportItemsToCsv(items: LostFoundItem[]) {
+  const headers = [
+    "ID",
+    "Label",
+    "Location",
+    "Status",
+    "Source",
+    "Camera ID",
+    "Video ID",
+    "First Seen",
+    "Last Seen",
+    "Updated At",
+    "Notes",
+    "Image URL",
+  ];
 
-  const res = await fetch(
-    buildApiUrl(
-      LOSTFOUND_API_BASE,
-      `/api/lostfound/items/export.csv?${usp.toString()}`
-    )
+  const escapeCsv = (v: unknown) => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const rows = items.map((it) => [
+    it.id,
+    it.label ?? "",
+    it.location ?? "",
+    it.status ?? "",
+    it.source ?? "",
+    it.cameraId ?? "",
+    it.videoId ?? "",
+    fmtTs(it.firstSeenTs),
+    fmtTs(it.lastSeenTs),
+    fmtTs(it.updatedAt),
+    it.notes ?? "",
+    it.imageUrl ?? "",
+  ]);
+
+  const csv = [headers, ...rows].map((r) => r.map(escapeCsv).join(",")).join("\n");
+  downloadBlob(
+    "lost_found_events_filtered.csv",
+    new Blob([csv], { type: "text/csv;charset=utf-8;" })
   );
-  if (!res.ok) throw new Error("Export CSV failed");
-  const blob = await res.blob();
-  downloadBlob("lost_found_reports.csv", blob);
 }
 
 function Chip({
@@ -239,9 +270,7 @@ function Chip({
       : tone === "green"
       ? "bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/25"
       : "bg-white/5 text-slate-200 ring-1 ring-white/10";
-  return (
-    <div className={`px-3 py-1 rounded-full text-xs ${cls}`}>{children}</div>
-  );
+  return <div className={`px-3 py-1 rounded-full text-xs ${cls}`}>{children}</div>;
 }
 
 function Modal({
@@ -292,21 +321,19 @@ export default function LostAndFoundEventsPage() {
     });
 
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "lost" | "solved">(
-    "all"
-  );
-  const [sourceFilter, setSourceFilter] = useState<
-    "all" | "live"  | "offline"
-  >("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "lost" | "solved">("all");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "live" | "offline">("all");
   const [labelFilter, setLabelFilter] = useState<string>("all");
   const [locationFilter, setLocationFilter] = useState<string>("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshSec, setRefreshSec] = useState(2);
 
   const [imgOpen, setImgOpen] = useState(false);
-  const [imgUrl, setImgUrl] = useState<string>("");
-  const [imgTitle, setImgTitle] = useState<string>("Evidence");
+  const [imgUrl, setImgUrl] = useState("");
+  const [imgTitle, setImgTitle] = useState("Evidence");
   const [zoom, setZoom] = useState(1);
 
   const [notesOpen, setNotesOpen] = useState(false);
@@ -314,7 +341,6 @@ export default function LostAndFoundEventsPage() {
   const [notesDraft, setNotesDraft] = useState("");
 
   const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
-
   const abortRef = useRef<AbortController | null>(null);
 
   async function loadRetentionSettings() {
@@ -367,13 +393,16 @@ export default function LostAndFoundEventsPage() {
 
   useEffect(() => {
     load();
+    return () => abortRef.current?.abort();
   }, []);
 
   useEffect(() => {
     if (!autoRefresh) return;
     const sec = clamp(Number(refreshSec || 2), 1, 30);
-    const t = setInterval(() => load(), sec * 1000);
-    return () => clearInterval(t);
+    const t = window.setInterval(() => {
+      load();
+    }, sec * 1000);
+    return () => window.clearInterval(t);
   }, [autoRefresh, refreshSec]);
 
   const labels = useMemo(() => {
@@ -394,20 +423,22 @@ export default function LostAndFoundEventsPage() {
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
+    const fromMs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : 0;
+    const toMsValue = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : 0;
 
     return items.filter((it) => {
       if (statusFilter === "lost" && !isLost(it)) return false;
       if (statusFilter === "solved" && !isSolved(it)) return false;
 
       const src = (it.source || "").toLowerCase();
-        if (sourceFilter !== "all") {
-          if (sourceFilter === "offline") {
-            const looksOffline = !!it.videoId && !it.cameraId;
-            if (!looksOffline && src !== "offline") return false;
-          } else if (src !== sourceFilter) {
-            return false;
-          }
+      if (sourceFilter !== "all") {
+        if (sourceFilter === "offline") {
+          const looksOffline = !!it.videoId && !it.cameraId;
+          if (!looksOffline && src !== "offline") return false;
+        } else if (src !== sourceFilter) {
+          return false;
         }
+      }
 
       if (labelFilter !== "all" && (it.label || "") !== labelFilter) {
         return false;
@@ -416,6 +447,10 @@ export default function LostAndFoundEventsPage() {
       if (locationFilter !== "all" && (it.location || "") !== locationFilter) {
         return false;
       }
+
+      const itemMs = toMs(it.lastSeenTs || it.firstSeenTs || it.updatedAt);
+      if (fromMs && (!itemMs || itemMs < fromMs)) return false;
+      if (toMsValue && (!itemMs || itemMs > toMsValue)) return false;
 
       if (!qq) return true;
 
@@ -442,41 +477,26 @@ export default function LostAndFoundEventsPage() {
     sourceFilter,
     labelFilter,
     locationFilter,
+    dateFrom,
+    dateTo,
   ]);
-function normalizeStatus(x: LostFoundItem): "lost" | "solved" | "other" {
-  const s = String(x?.status ?? "")
-    .trim()
-    .toLowerCase();
 
-  if (s === "lost") return "lost";
-  if (s === "solved") return "solved";
-  return "other";
-}
+  const counts = useMemo(() => {
+    let lost = 0;
+    let solved = 0;
 
-function isLost(x: LostFoundItem) {
-  return normalizeStatus(x) === "lost";
-}
+    for (const it of filtered) {
+      const status = normalizeStatus(it);
+      if (status === "lost") lost += 1;
+      else if (status === "solved") solved += 1;
+    }
 
-function isSolved(x: LostFoundItem) {
-  return normalizeStatus(x) === "solved";
-}
-
-const counts = useMemo(() => {
-  let lost = 0;
-  let solved = 0;
-
-  for (const it of filtered) {
-    const status = normalizeStatus(it);
-    if (status === "lost") lost += 1;
-    else if (status === "solved") solved += 1;
-  }
-
-  return {
-    total: filtered.length,
-    lost,
-    solved,
-  };
-}, [filtered]);
+    return {
+      total: filtered.length,
+      lost,
+      solved,
+    };
+  }, [filtered]);
 
   async function onSolve(it: LostFoundItem) {
     try {
@@ -525,6 +545,16 @@ const counts = useMemo(() => {
     setImgOpen(true);
   }
 
+  function clearFilters() {
+    setQ("");
+    setStatusFilter("all");
+    setSourceFilter("all");
+    setLabelFilter("all");
+    setLocationFilter("all");
+    setDateFrom("");
+    setDateTo("");
+  }
+
   return (
     <div className="min-h-screen bg-[#0b1220] text-slate-100">
       <div className="w-full px-6 py-6">
@@ -533,8 +563,8 @@ const counts = useMemo(() => {
         </div>
 
         <div className="rounded-2xl bg-[#0e1627]/70 ring-1 ring-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.35)] p-4">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1">
+          <div className="flex items-center gap-3 flex-wrap xl:flex-nowrap">
+            <div className="relative flex-1 min-w-[280px]">
               <Search className="w-4 h-4 absolute left-4 top-3.5 text-slate-400" />
               <input
                 value={q}
@@ -544,7 +574,7 @@ const counts = useMemo(() => {
               />
             </div>
 
-            <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-2 text-sm flex-wrap">
               <div className="hidden md:flex items-center gap-2 px-3 py-2 rounded-full bg-[#0b1220] ring-1 ring-white/10 text-slate-300">
                 <Filter className="w-4 h-4 text-slate-400" />
                 <span>Filters</span>
@@ -572,7 +602,11 @@ const counts = useMemo(() => {
                   min={1}
                   max={30}
                   value={refreshSec}
-                  onChange={(e) => setRefreshSec(Number(e.target.value || 2))}
+                  onChange={(e) => {
+                    const raw = Number(e.target.value);
+                    setRefreshSec(Number.isFinite(raw) ? clamp(raw, 1, 30) : 2);
+                  }}
+                  onBlur={() => setRefreshSec((v) => clamp(Number(v || 2), 1, 30))}
                   className="w-12 bg-transparent outline-none text-slate-200 text-sm"
                   disabled={!autoRefresh}
                 />
@@ -585,22 +619,12 @@ const counts = useMemo(() => {
                 title="Refresh"
               >
                 <RefreshCw
-                  className={`w-4 h-4 ${
-                    loading ? "animate-spin" : ""
-                  } text-slate-300`}
+                  className={`w-4 h-4 ${loading ? "animate-spin" : ""} text-slate-300`}
                 />
               </button>
 
               <button
-                onClick={() =>
-                  apiExportCsv({
-                    q: q.trim() || undefined,
-                    status: statusFilter === "all" ? "" : statusFilter,
-                    source: sourceFilter === "all" ? "" : sourceFilter,
-                    label: labelFilter === "all" ? "" : labelFilter,
-                    location: locationFilter === "all" ? "" : locationFilter,
-                  })
-                }
+                onClick={() => exportItemsToCsv(filtered)}
                 className="hidden lg:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-500/15 hover:bg-sky-500/20 ring-1 ring-sky-400/25 text-sky-200 transition"
               >
                 <Download className="w-4 h-4" />
@@ -609,10 +633,10 @@ const counts = useMemo(() => {
             </div>
           </div>
 
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
+              onChange={(e) => setStatusFilter(e.target.value as "all" | "lost" | "solved")}
               className="px-4 py-2.5 rounded-full bg-[#0b1220] ring-1 ring-white/10 text-sm outline-none hover:ring-white/20 transition"
             >
               <option value="all">Status: All</option>
@@ -622,7 +646,7 @@ const counts = useMemo(() => {
 
             <select
               value={sourceFilter}
-              onChange={(e) => setSourceFilter(e.target.value as any)}
+              onChange={(e) => setSourceFilter(e.target.value as "all" | "live" | "offline")}
               className="px-4 py-2.5 rounded-full bg-[#0b1220] ring-1 ring-white/10 text-sm outline-none hover:ring-white/20 transition"
             >
               <option value="all">Source: All</option>
@@ -653,6 +677,26 @@ const counts = useMemo(() => {
                 </option>
               ))}
             </select>
+
+            <div className="relative">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="date-input w-full px-4 pr-11 py-2.5 rounded-full bg-[#0b1220] ring-1 ring-white/10 text-sm outline-none hover:ring-white/20 transition text-slate-200"
+              />
+              <Calendar className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white" />
+            </div>
+
+            <div className="relative">
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="date-input w-full px-4 pr-11 py-2.5 rounded-full bg-[#0b1220] ring-1 ring-white/10 text-sm outline-none hover:ring-white/20 transition text-slate-200"
+              />
+              <Calendar className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white" />
+            </div>
           </div>
 
           <div className="mt-3 flex items-center gap-2 flex-wrap">
@@ -660,7 +704,11 @@ const counts = useMemo(() => {
             <Chip tone="red">{counts.lost} lost</Chip>
             <Chip tone="green">{counts.solved} solved</Chip>
             <Chip>Window: latest {MAX_VISIBLE_ITEMS}</Chip>
-
+            {(dateFrom || dateTo) && (
+              <Chip>
+                Date: {dateFrom || "Any"} → {dateTo || "Any"}
+              </Chip>
+            )}
             <Chip>
               Retention:{" "}
               {retentionSettings.data_retention_enabled === false
@@ -668,27 +716,24 @@ const counts = useMemo(() => {
                 : `${Number(retentionSettings.data_retention_days ?? 90)} days`}
             </Chip>
 
+            <button
+              onClick={clearFilters}
+              className="px-3 py-1 rounded-full text-xs bg-white/5 hover:bg-white/10 ring-1 ring-white/10 text-slate-200"
+            >
+              Clear Filters
+            </button>
+
             <div className="flex-1" />
 
             <button
-              onClick={() =>
-                apiExportCsv({
-                  q: q.trim() || undefined,
-                  status: statusFilter === "all" ? "" : statusFilter,
-                  source: sourceFilter === "all" ? "" : sourceFilter,
-                  label: labelFilter === "all" ? "" : labelFilter,
-                  location: locationFilter === "all" ? "" : locationFilter,
-                })
-              }
+              onClick={() => exportItemsToCsv(filtered)}
               className="lg:hidden inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-500/15 hover:bg-sky-500/20 ring-1 ring-sky-400/25 text-sky-200 transition"
             >
               <Download className="w-4 h-4" />
               Export CSV
             </button>
 
-            {err ? (
-              <span className="text-rose-300 text-sm ml-2">{err}</span>
-            ) : null}
+            {err ? <span className="text-rose-300 text-sm ml-2">{err}</span> : null}
           </div>
         </div>
 
@@ -771,26 +816,18 @@ const counts = useMemo(() => {
                     <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                       <div className="rounded-2xl bg-[#0b1220]/70 ring-1 ring-white/10 px-4 py-3">
                         <div className="text-xs text-slate-400">First Seen</div>
-                        <div className="text-slate-200">
-                          {fmtTs(it.firstSeenTs)}
-                        </div>
+                        <div className="text-slate-200">{fmtTs(it.firstSeenTs)}</div>
                       </div>
                       <div className="rounded-2xl bg-[#0b1220]/70 ring-1 ring-white/10 px-4 py-3">
                         <div className="text-xs text-slate-400">Last Seen</div>
-                        <div className="text-slate-200">
-                          {fmtTs(it.lastSeenTs)}
-                        </div>
+                        <div className="text-slate-200">{fmtTs(it.lastSeenTs)}</div>
                       </div>
                     </div>
 
                     <div className="mt-3 rounded-2xl bg-[#0b1220]/70 ring-1 ring-white/10 px-4 py-3">
                       <div className="text-xs text-slate-400">Notes</div>
                       <div className="text-sm text-slate-200 mt-0.5 whitespace-pre-wrap break-words">
-                        {it.notes ? (
-                          it.notes
-                        ) : (
-                          <span className="text-slate-500">No notes</span>
-                        )}
+                        {it.notes ? it.notes : <span className="text-slate-500">No notes</span>}
                       </div>
                     </div>
 
@@ -845,9 +882,7 @@ const counts = useMemo(() => {
             <div className="text-xs text-slate-300 truncate">{imgUrl}</div>
             <div className="flex items-center gap-2 shrink-0">
               <button
-                onClick={() =>
-                  setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))
-                }
+                onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))}
                 className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 ring-1 ring-white/10 text-sm"
               >
                 −
@@ -856,9 +891,7 @@ const counts = useMemo(() => {
                 {Math.round(zoom * 100)}%
               </div>
               <button
-                onClick={() =>
-                  setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))
-                }
+                onClick={() => setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))}
                 className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 ring-1 ring-white/10 text-sm"
               >
                 +

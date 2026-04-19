@@ -5,6 +5,7 @@ import {
   FileDown,
   Image as ImageIcon,
   FileSpreadsheet,
+  Calendar as CalendarIcon,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -290,6 +291,11 @@ function PdfChartCard({
   );
 }
 
+function toMs(ts?: number) {
+  if (!ts) return null;
+  return ts > 2_000_000_000_000 ? ts : ts * 1000;
+}
+
 /* ================= COMPONENT ================= */
 
 function LostAndFoundReportsPageInner() {
@@ -300,6 +306,9 @@ function LostAndFoundReportsPageInner() {
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "lost" | "solved">("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [locationFilter, setLocationFilter] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -369,27 +378,63 @@ function LostAndFoundReportsPageInner() {
     items.forEach((it) => s.add((it.source || "unknown").toLowerCase()));
     return ["all", ...Array.from(s).sort()];
   }, [items]);
-  
+
+  const locations = useMemo(() => {
+    const s = new Set<string>();
+    items.forEach((it) => {
+      const loc = String(it.location || "Unknown").trim();
+      if (loc) s.add(loc);
+    });
+    return ["all", ...Array.from(s).sort((a, b) => a.localeCompare(b))];
+  }, [items]);
+
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
 
     return items.filter((it) => {
+      // Status filter
       if (statusFilter === "lost" && !isLost(it)) return false;
       if (statusFilter === "solved" && !isSolved(it)) return false;
 
+      // Source filter
       if (sourceFilter !== "all") {
         const src = (it.source || "").toLowerCase();
         if (src !== sourceFilter) return false;
       }
 
+      // Location filter
+      if (locationFilter !== "all") {
+        const loc = String(it.location || "Unknown").trim().toLowerCase();
+        if (loc !== locationFilter.toLowerCase()) return false;
+      }
+
+      // Date filter (based on firstSeenTs)
+      const firstSeenMs = toMs(it.firstSeenTs);
+
+      if (dateFrom && firstSeenMs) {
+        const fromMs = new Date(`${dateFrom}T00:00:00`).getTime();
+        if (firstSeenMs < fromMs) return false;
+      }
+
+      if (dateTo && firstSeenMs) {
+        const toMsValue = new Date(`${dateTo}T23:59:59.999`).getTime();
+        if (firstSeenMs > toMsValue) return false;
+      }
+
+      // If item has no firstSeenTs but user selected date filter, exclude it
+      if ((dateFrom || dateTo) && !firstSeenMs) return false;
+
+      // Search filter
       if (!qq) return true;
+
       const text = `${it.id} ${it.label} ${it.location} ${it.source} ${it.status}`
         .toLowerCase()
         .trim();
+
       return text.includes(qq);
     });
-  }, [items, q, statusFilter, sourceFilter]);
+  }, [items, q, statusFilter, sourceFilter, locationFilter, dateFrom, dateTo]);
 
   // ADD THIS LINE HERE:
   const activeItems = useMemo(() => {
@@ -539,6 +584,9 @@ function LostAndFoundReportsPageInner() {
       ["Total Records", String(activeForExport.length)],
       ["Status Filter", statusFilter],
       ["Source Filter", sourceFilter],
+      ["Location Filter", locationFilter === "all" ? "-" : locationFilter],
+      ["Date From", dateFrom || "-"],
+      ["Date To", dateTo || "-"],
       ["Search Query", q || "-"],
       [],
     ];
@@ -840,7 +888,7 @@ function LostAndFoundReportsPageInner() {
           </div>
         </div>
 
-        <div className="bg-white/5 ring-1 ring-white/10 rounded-2xl p-4 mb-8">
+       <div className="bg-white/5 ring-1 ring-white/10 rounded-2xl p-4 mb-8">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
             <input
               value={q}
@@ -872,13 +920,63 @@ function LostAndFoundReportsPageInner() {
             </select>
           </div>
 
-         <div className="mt-3 text-xs text-slate-400">
-            Showing <span className="text-slate-200 font-semibold">{activeItems.length}</span> items
-            {filtered.length !== activeItems.length && (
-              <span className="text-slate-500 ml-2">
-                (excluding {filtered.length - activeItems.length} deleted)
-              </span>
-            )}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
+            <div className="relative">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="date-input w-full px-3 py-2 pr-10 rounded-xl bg-[#0f172a] ring-1 ring-white/10 outline-none text-sm text-slate-200"
+              />
+              <CalendarIcon className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white" />
+            </div>
+
+            <div className="relative">
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="date-input w-full px-3 py-2 pr-10 rounded-xl bg-[#0f172a] ring-1 ring-white/10 outline-none text-sm text-slate-200"
+              />
+              <CalendarIcon className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white" />
+            </div>
+
+            <select
+              value={locationFilter}
+              onChange={(e) => setLocationFilter(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl bg-[#0f172a] ring-1 ring-white/10 outline-none text-sm text-slate-200"
+            >
+              {locations.map((loc) => (
+                <option key={loc} value={loc}>
+                  {loc === "all" ? "All Location" : formatLocationLabel(loc)}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 mt-3">
+            <div className="text-xs text-slate-400">
+              Showing <span className="text-slate-200 font-semibold">{activeItems.length}</span> items
+              {filtered.length !== activeItems.length && (
+                <span className="text-slate-500 ml-2">
+                  (excluding {filtered.length - activeItems.length} deleted)
+                </span>
+              )}
+            </div>
+
+            <button
+              onClick={() => {
+                setQ("");
+                setStatusFilter("all");
+                setSourceFilter("all");
+                setLocationFilter("all");
+                setDateFrom("");
+                setDateTo("");
+              }}
+              className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 ring-1 ring-white/10 text-sm"
+            >
+              Clear Filters
+            </button>
           </div>
         </div>
 
@@ -1125,6 +1223,8 @@ function LostAndFoundReportsPageInner() {
               <div className="text-base text-slate-600">Search: {q || "-"}</div>
               <div className="text-base text-slate-600 mt-1">Status: {statusFilter}</div>
               <div className="text-base text-slate-600 mt-1">Source: {sourceFilter}</div>
+              <div className="text-base text-slate-600 mt-1">Location: {locationFilter === "all" ? "-" : formatLocationLabel(locationFilter)}</div>
+              <div className="text-base text-slate-600 mt-1">Date Range: {dateFrom || "-"} to {dateTo || "-"}</div>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
