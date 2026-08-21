@@ -129,7 +129,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               </div>
               <div className="flex justify-between text-slate-400">
                 <span>Password:</span>
-                <span className="text-slate-300">user1234</span>
+                <span className="text-slate-300">secret</span>
               </div>
             </div>
           </div>
