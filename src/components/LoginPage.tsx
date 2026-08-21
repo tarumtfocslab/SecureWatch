@@ -73,7 +73,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                   id="username"
                   type="text"
                   value=""
-                  //value={username}
+                  /* value={username} */
                   onChange={(e) => setUsername(e.target.value)}
                   className="w-full bg-slate-800/50 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                   placeholder="Enter username/email"
@@ -95,7 +95,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                   id="password"
                   type="password"
                   value=""
-                  //value={password}
+                  /* value={password} */
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-slate-800/50 border border-slate-700 rounded-lg pl-10 pr-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                   placeholder="Enter password"
